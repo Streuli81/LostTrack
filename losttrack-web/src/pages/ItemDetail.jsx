@@ -8,10 +8,12 @@ import {
   updateOwner,
   updateCollector,
   listAuditLog,
+  printReceipt,
 } from "../core/storage/lostItemRepo";
 
 import InvestigationSteps from "../components/InvestigationSteps";
 import PartyCardEditor from "../components/PartyCardEditor";
+import ReceiptPrint from "../print/ReceiptPrint.jsx";
 
 const STATUS = ["OPEN", "IN_PROGRESS", "CLOSED"];
 
@@ -70,16 +72,12 @@ function Accordion({
           </div>
 
           {subtitle ? (
-            <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
-              {subtitle}
-            </div>
+            <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>{subtitle}</div>
           ) : null}
         </div>
 
         {right ? (
-          <div style={{ color: "var(--muted)", fontSize: 13, whiteSpace: "nowrap" }}>
-            {right}
-          </div>
+          <div style={{ color: "var(--muted)", fontSize: 13, whiteSpace: "nowrap" }}>{right}</div>
         ) : null}
       </div>
 
@@ -140,16 +138,18 @@ function labelForPath(path) {
     "collector.address": "Abholer Adresse",
     "collector.phone": "Abholer Telefon",
     "collector.email": "Abholer E-Mail",
+
+    "receipts.length": "Quittungen (Anzahl)",
   };
 
   if (!path) return path;
 
-  // Weniger Rauschen
   if (path === "fundNo" || path === "id") return null;
 
-  // InvestigationSteps: im UI als "Ermittlungsschritte"
   if (path.startsWith("investigationSteps[")) return "Ermittlungsschritte";
   if (path === "investigationSteps.length") return "Ermittlungsschritte (Anzahl)";
+
+  if (path.startsWith("receipts[")) return "Quittungen";
 
   return map[path] || path;
 }
@@ -193,7 +193,8 @@ function describeAuditEntry(e) {
   if (t === "INVESTIGATION_STEP_DELETED") {
     const who = snap?.step?.who ? `Wer: ${snap.step.who}` : "";
     const what = snap?.step?.what ? `Was: ${snap.step.what}` : "";
-    const detail = [who, what].filter(Boolean).join(" · ") || (snap?.stepId ? `ID: ${snap.stepId}` : null);
+    const detail =
+      [who, what].filter(Boolean).join(" · ") || (snap?.stepId ? `ID: ${snap.stepId}` : null);
     return { title: "Ermittlungsschritt gelöscht", detail, actor };
   }
 
@@ -201,7 +202,11 @@ function describeAuditEntry(e) {
     const who = snap?.step?.who ? `Wer: ${snap.step.who}` : "";
     const what = snap?.step?.what ? `Was: ${snap.step.what}` : "";
     const detail = [who, what].filter(Boolean).join(" · ");
-    return { title: "Auto-Ermittlungsschritt hinzugefügt", detail: detail || null, actor: actor || "System" };
+    return {
+      title: "Auto-Ermittlungsschritt hinzugefügt",
+      detail: detail || null,
+      actor: actor || "System",
+    };
   }
 
   if (t === "FINDER_UPDATED") return { title: "Finder aktualisiert", actor };
@@ -211,13 +216,18 @@ function describeAuditEntry(e) {
     return { title: "Abholer aktualisiert", actor };
   }
 
+  if (t === "RECEIPT_PRINTED") {
+    const r = snap?.receipt;
+    const extra = r?.id ? `(${r.id})` : "";
+    return { title: `Quittung gedruckt ${extra}`.trim(), actor };
+  }
+
   return { title: t, actor };
 }
 
 function normalizeDiffForUi(diff) {
   if (!diff || !Array.isArray(diff) || diff.length === 0) return [];
 
-  // updatedAt rausfiltern, weil es immer ändert
   const filtered = diff
     .filter((d) => d && d.path && d.path !== "updatedAt")
     .map((d) => ({ ...d, label: labelForPath(d.path) }))
@@ -284,26 +294,40 @@ function AuditRow({ entry }) {
         alignItems: "baseline",
       }}
     >
-      <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>
-        {fmtDateTime(entry?.at)}
-      </div>
+      <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>{fmtDateTime(entry?.at)}</div>
 
       <div>
         <div style={{ fontWeight: 700 }}>{title}</div>
-        {detail ? (
-          <div style={{ marginTop: 3, color: "var(--muted)", fontSize: 13 }}>
-            {detail}
-          </div>
-        ) : null}
+        {detail ? <div style={{ marginTop: 3, color: "var(--muted)", fontSize: 13 }}>{detail}</div> : null}
 
         <DiffList diff={entry?.diff} />
       </div>
 
-      <div style={{ textAlign: "right", opacity: 0.85 }}>
-        {nonEmpty(actor)}
-      </div>
+      <div style={{ textAlign: "right", opacity: 0.85 }}>{nonEmpty(actor)}</div>
     </div>
   );
+}
+
+/* ---------------------------
+ * Receipt helpers (UI)
+ * --------------------------- */
+
+function hasName(p) {
+  return !!(p?.name || "").toString().trim();
+}
+
+function toNumberOrNull(v) {
+  const s = (v ?? "").toString().trim();
+  if (!s) return null;
+  const n = Number(s);
+  if (Number.isNaN(n)) return null;
+  return n;
+}
+
+function fmtCHFInline(v) {
+  const n = toNumberOrNull(v);
+  if (n === null) return "—";
+  return `CHF ${n.toFixed(2)}`;
 }
 
 /* ---------------------------
@@ -317,6 +341,15 @@ export default function ItemDetail() {
 
   const [auditOpen, setAuditOpen] = useState(false);
   const [invOpen, setInvOpen] = useState(false);
+
+  // Receipt UI state
+  const [receiptMode, setReceiptMode] = useState("REPORT"); // REPORT | RECEIPT
+  const [receiptJob, setReceiptJob] = useState(null); // { type, receiptNo, amount, recipient, reason, orgName, orgContact }
+
+  // Beträge: NUR Polizei trägt ein (Owner gibt ab / Finder holt ab)
+  const [ownerRewardAmount, setOwnerRewardAmount] = useState("");
+  const [finderReceiptReason, setFinderReceiptReason] = useState("OWNER_UNKNOWN"); // OWNER_UNKNOWN | REWARD_PAYOUT
+  const [finderRewardPayoutAmount, setFinderRewardPayoutAmount] = useState("");
 
   const item = useMemo(() => getLostItemById(id), [id, tick]);
   const auditAll = useMemo(() => listAuditLog(), [tick]);
@@ -347,14 +380,20 @@ export default function ItemDetail() {
   // Optional: bis Login kommt, kannst du hier einen fixen actor setzen.
   const actor = null; // z.B. "M. S."
 
+  // ✅ WICHTIG: Nur Audit für diese Fundsache zeigen (primär über snapshot.id)
   const auditForItem = useMemo(() => {
     const all = auditAll || [];
-    return all.filter((e) => {
-      const sid = e?.snapshot?.id || e?.snapshot?.itemId || null;
-      if (sid && sid === item.id) return true;
-      if (e?.fundNo && item.fundNo && e.fundNo === item.fundNo) return true;
-      return false;
-    });
+
+    // 1) Primär: snapshot.id match
+    const byId = all.filter((e) => e?.snapshot?.id && e.snapshot.id === item.id);
+    if (byId.length > 0) return byId;
+
+    // 2) Fallback nur wenn byId leer und fundNo existiert (für alte Einträge)
+    if (item.fundNo) {
+      return all.filter((e) => e?.fundNo && e.fundNo === item.fundNo);
+    }
+
+    return [];
   }, [auditAll, item.id, item.fundNo]);
 
   const auditSortedAsc = useMemo(() => {
@@ -372,14 +411,72 @@ export default function ItemDetail() {
     return { at: lastAudit.at, title, actor: a };
   }, [lastAudit]);
 
-  function onPrint() {
+  // Organisation (Platzhalter – später ersetzbar durch config)
+  const orgName = "Gemeindepolizei …";
+  const orgContact = "Adresse / Telefon …";
+
+  function onPrintReport() {
+    setReceiptMode("REPORT");
+    setReceiptJob(null);
     window.print();
   }
+
+  function triggerReceiptPrint({ receiptType, recipient, amount, reason }) {
+    const res = printReceipt({
+      id: item.id,
+      receiptType,
+      recipient,
+      amount,
+      actor,
+      notes: reason || null,
+    });
+
+    if (!res?.ok) {
+      alert(res?.error || "Quittung konnte nicht erstellt werden.");
+      return;
+    }
+
+    const receiptNo = res?.receipt?.id || "—";
+
+    setReceiptMode("RECEIPT");
+    setReceiptJob({
+      type: receiptType,
+      receiptNo,
+      amount: amount ?? null,
+      recipient: recipient || "",
+      reason: reason || "",
+      orgName,
+      orgContact,
+    });
+
+    refresh();
+  }
+
+  // Bedingungen für Buttons
+  const hasFinder = hasName(item?.finder);
+  const wantsReward = !!item?.finder?.rewardRequested;
+
+  const hasOwner = hasName(item?.owner);
+  const hasCollector = hasName(item?.collector);
+
+  const canOwnerReceipt = hasOwner || hasCollector;
+  const canFinderReceipt = hasCollector || hasFinder;
+
+  // Empfänger-Name (Default)
+  const ownerRecipientName = (item?.owner?.name || item?.collector?.name || "").toString().trim();
+  const finderRecipientName = (item?.collector?.name || item?.finder?.name || "").toString().trim();
+
+  const finderReasonText =
+    finderReceiptReason === "REWARD_PAYOUT" ? "Finderlohn-Abholung" : "Eigentümer unbekannt";
+
+  const finderAmount =
+    finderReceiptReason === "REWARD_PAYOUT" ? toNumberOrNull(finderRewardPayoutAmount) : null;
+
+  const ownerAmount = toNumberOrNull(ownerRewardAmount);
 
   return (
     <section style={{ maxWidth: 1100 }}>
       <style>{`
-        /* ✅ Print-Area im normalen Screen verstecken */
         .print-only { display: none; }
 
         @media print {
@@ -425,7 +522,6 @@ export default function ItemDetail() {
             border-bottom: 1px solid rgba(0,0,0,0.12);
           }
 
-          /* ✅ Diff im Print (PDF) */
           .print-diff {
             margin-top: 6px;
             display: grid;
@@ -471,8 +567,8 @@ export default function ItemDetail() {
             Bearbeiten
           </button>
 
-          <button type="button" onClick={onPrint}>
-            Drucken / PDF
+          <button type="button" onClick={onPrintReport}>
+            Drucken / PDF (Bericht)
           </button>
 
           <Link to="/suche">Zur Suche</Link>
@@ -502,7 +598,7 @@ export default function ItemDetail() {
             </div>
 
             <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 13 }}>
-              Bearbeiten ist jetzt verfügbar. Quittung/Export folgt später.
+              Quittungen sind innerhalb der Karten. Finder bestimmt nur „ja/nein“ für Finderlohn.
             </div>
           </Card>
         </div>
@@ -512,6 +608,34 @@ export default function ItemDetail() {
             title="Finder"
             initialValue={item.finder}
             showRewardRequested={true}
+            footer={
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={footerRow}>
+                  <button
+                    type="button"
+                    disabled={!hasFinder}
+                    onClick={() => {
+                      triggerReceiptPrint({
+                        receiptType: "FUND_RECEIPT",
+                        recipient: (item?.finder?.name || "").toString().trim(),
+                        amount: null,
+                        reason: "",
+                      });
+                    }}
+                  >
+                    Fundquittung drucken
+                  </button>
+
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                    {hasFinder ? "aktiv" : "Finder erfassen für Quittung"}
+                  </div>
+                </div>
+
+                <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                  Finderlohn (ja/nein) wird automatisch auf der Quittung aufgeführt.
+                </div>
+              </div>
+            }
             onSave={(finder) => {
               const res = updateFinder({ id: item.id, finder, actor });
               if (res?.ok) refresh();
@@ -522,6 +646,47 @@ export default function ItemDetail() {
           <PartyCardEditor
             title="Eigentümer"
             initialValue={item.owner}
+            footer={
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontWeight: 700 }}>Empfangsbestätigung Eigentümer/Abholer</div>
+
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <label style={labelInline}>
+                    Übergebener Finderlohn (CHF)
+                    <input
+                      value={ownerRewardAmount}
+                      onChange={(e) => setOwnerRewardAmount(e.target.value)}
+                      placeholder="z.B. 50"
+                      style={inputInline}
+                    />
+                  </label>
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                    Vorschau: {fmtCHFInline(ownerRewardAmount)}
+                  </div>
+                </div>
+
+                <div style={footerRow}>
+                  <button
+                    type="button"
+                    disabled={!canOwnerReceipt}
+                    onClick={() => {
+                      triggerReceiptPrint({
+                        receiptType: "OWNER_RECEIPT",
+                        recipient: ownerRecipientName,
+                        amount: ownerAmount,
+                        reason: "",
+                      });
+                    }}
+                  >
+                    Empfangsbestätigung drucken
+                  </button>
+
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                    {canOwnerReceipt ? "aktiv" : "Eigentümer oder Abholer erfassen"}
+                  </div>
+                </div>
+              </div>
+            }
             onSave={(owner) => {
               const res = updateOwner({ id: item.id, owner, actor });
               if (res?.ok) refresh();
@@ -533,6 +698,78 @@ export default function ItemDetail() {
             title="Abholer"
             initialValue={item.collector}
             allowClear={true}
+            footer={
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontWeight: 700 }}>Empfangsbestätigung Finder</div>
+
+                <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      type="radio"
+                      name="finder-reason"
+                      checked={finderReceiptReason === "OWNER_UNKNOWN"}
+                      onChange={() => setFinderReceiptReason("OWNER_UNKNOWN")}
+                    />
+                    Eigentümer unbekannt
+                  </label>
+
+                  <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      type="radio"
+                      name="finder-reason"
+                      checked={finderReceiptReason === "REWARD_PAYOUT"}
+                      onChange={() => setFinderReceiptReason("REWARD_PAYOUT")}
+                      disabled={!wantsReward}
+                    />
+                    Finderlohn-Abholung
+                  </label>
+
+                  {!wantsReward ? (
+                    <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                      (Finderlohn-Abholung nur möglich, wenn Finderlohn gewünscht)
+                    </div>
+                  ) : null}
+                </div>
+
+                {finderReceiptReason === "REWARD_PAYOUT" ? (
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <label style={labelInline}>
+                      Ausbezahlter Finderlohn (CHF)
+                      <input
+                        value={finderRewardPayoutAmount}
+                        onChange={(e) => setFinderRewardPayoutAmount(e.target.value)}
+                        placeholder="z.B. 50"
+                        style={inputInline}
+                      />
+                    </label>
+                    <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                      Vorschau: {fmtCHFInline(finderRewardPayoutAmount)}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div style={footerRow}>
+                  <button
+                    type="button"
+                    disabled={!canFinderReceipt}
+                    onClick={() => {
+                      triggerReceiptPrint({
+                        receiptType: "FINDER_RECEIPT",
+                        recipient: finderRecipientName,
+                        amount: finderAmount,
+                        reason: finderReasonText,
+                      });
+                    }}
+                  >
+                    Empfangsbestätigung Finder drucken
+                  </button>
+
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                    {canFinderReceipt ? "aktiv" : "Abholer oder Finder erfassen"}
+                  </div>
+                </div>
+              </div>
+            }
             onSave={(collector) => {
               const res = updateCollector({ id: item.id, collector, actor });
               if (res?.ok) refresh();
@@ -599,98 +836,106 @@ export default function ItemDetail() {
         </Accordion>
       </div>
 
-      {/* PRINT AREA: Stammdaten + Audit (inkl. Diff) */}
       <div id="print-area" className="print-only" style={{ marginTop: 16 }}>
-        <div className="print-section">
-          <div className="print-title">Fundsache {item.fundNo ? `#${item.fundNo}` : ""}</div>
+        {receiptMode === "RECEIPT" && receiptJob ? (
+          <ReceiptPrint
+            item={item}
+            receiptType={receiptJob.type}
+            orgName={receiptJob.orgName}
+            orgContact={receiptJob.orgContact}
+            receiptNo={receiptJob.receiptNo}
+            amount={receiptJob.amount}
+            recipientOverride={receiptJob.recipient}
+            reason={receiptJob.reason}
+            finderRewardWanted={!!item?.finder?.rewardRequested}
+          />
+        ) : (
+          <>
+            <div className="print-section">
+              <div className="print-title">Fundsache {item.fundNo ? `#${item.fundNo}` : ""}</div>
 
-          <div className="print-kv">
-            <div className="print-k">Fundnummer</div>
-            <div>{nonEmpty(item.fundNo)}</div>
+              <div className="print-kv">
+                <div className="print-k">Fundnummer</div>
+                <div>{nonEmpty(item.fundNo)}</div>
 
-            <div className="print-k">Status</div>
-            <div>{nonEmpty(status)}</div>
+                <div className="print-k">Status</div>
+                <div>{nonEmpty(status)}</div>
 
-            <div className="print-k">ID</div>
-            <div>{nonEmpty(item.id)}</div>
+                <div className="print-k">ID</div>
+                <div>{nonEmpty(item.id)}</div>
 
-            <div className="print-k">Funddatum</div>
-            <div>
-              {nonEmpty(item?.foundAt?.date)}{" "}
-              {nonEmpty(item?.foundAt?.time) !== "—" ? item?.foundAt?.time : ""}
-            </div>
-
-            <div className="print-k">Fundort</div>
-            <div>{nonEmpty(item?.foundAt?.location)}</div>
-
-            <div className="print-k">Sachbearbeiter</div>
-            <div>
-              {nonEmpty(item?.caseWorker?.id)}{" "}
-              {nonEmpty(item?.caseWorker?.name) !== "—" ? `– ${item?.caseWorker?.name}` : ""}
-            </div>
-
-            <div className="print-k">Gegenstand</div>
-            <div>
-              {nonEmpty(label)}
-              {item?.item?.description ? ` – ${item.item.description}` : ""}
-            </div>
-
-            <div className="print-k">Finder</div>
-            <div>
-              {nonEmpty(item?.finder?.name)} – {nonEmpty(item?.finder?.phone)} – {nonEmpty(item?.finder?.email)}
-              {item?.finder?.rewardRequested ? " (Finderlohn gewünscht)" : ""}
-            </div>
-
-            <div className="print-k">Eigentümer</div>
-            <div>
-              {item?.owner
-                ? `${nonEmpty(item?.owner?.name)} – ${nonEmpty(item?.owner?.phone)} – ${nonEmpty(item?.owner?.email)}`
-                : "—"}
-            </div>
-
-            <div className="print-k">Abholer</div>
-            <div>
-              {item?.collector
-                ? `${nonEmpty(item?.collector?.name)} – ${nonEmpty(item?.collector?.phone)} – ${nonEmpty(item?.collector?.email)}`
-                : "—"}
-            </div>
-          </div>
-        </div>
-
-        <div className="print-section">
-          <div className="print-title">Audit-Log / Verlauf</div>
-
-          {auditSortedAsc.length ? (
-            auditSortedAsc.map((e) => {
-              const { title, detail, actor: a } = describeAuditEntry(e);
-              return (
-                <div key={e.id || `${e.at}-${e.type}`} style={{ paddingBottom: 10 }}>
-                  <div className="print-audit-row">
-                    <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>
-                      {fmtDateTime(e?.at)}
-                    </div>
-                    <div style={{ fontWeight: 700 }}>
-                      {title}
-                      {detail ? (
-                        <div style={{ fontWeight: 400, fontSize: 12, opacity: 0.85, marginTop: 2 }}>
-                          {detail}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div style={{ textAlign: "right", opacity: 0.85 }}>
-                      {nonEmpty(a)}
-                    </div>
-                  </div>
-
-                  {/* ✅ Neu im Print: konkrete Änderungen */}
-                  <PrintDiffList diff={e?.diff} />
+                <div className="print-k">Funddatum</div>
+                <div>
+                  {nonEmpty(item?.foundAt?.date)}{" "}
+                  {nonEmpty(item?.foundAt?.time) !== "—" ? item?.foundAt?.time : ""}
                 </div>
-              );
-            })
-          ) : (
-            <div>Keine Audit-Einträge vorhanden.</div>
-          )}
-        </div>
+
+                <div className="print-k">Fundort</div>
+                <div>{nonEmpty(item?.foundAt?.location)}</div>
+
+                <div className="print-k">Sachbearbeiter</div>
+                <div>
+                  {nonEmpty(item?.caseWorker?.id)}{" "}
+                  {nonEmpty(item?.caseWorker?.name) !== "—" ? `– ${item?.caseWorker?.name}` : ""}
+                </div>
+
+                <div className="print-k">Gegenstand</div>
+                <div>
+                  {nonEmpty(label)}
+                  {item?.item?.description ? ` – ${item.item.description}` : ""}
+                </div>
+
+                <div className="print-k">Finder</div>
+                <div>
+                  {nonEmpty(item?.finder?.name)} – {nonEmpty(item?.finder?.phone)} – {nonEmpty(item?.finder?.email)}
+                  {item?.finder?.rewardRequested ? " (Finderlohn gewünscht)" : ""}
+                </div>
+
+                <div className="print-k">Eigentümer</div>
+                <div>
+                  {item?.owner
+                    ? `${nonEmpty(item?.owner?.name)} – ${nonEmpty(item?.owner?.phone)} – ${nonEmpty(item?.owner?.email)}`
+                    : "—"}
+                </div>
+
+                <div className="print-k">Abholer</div>
+                <div>
+                  {item?.collector
+                    ? `${nonEmpty(item?.collector?.name)} – ${nonEmpty(item?.collector?.phone)} – ${nonEmpty(item?.collector?.email)}`
+                    : "—"}
+                </div>
+              </div>
+            </div>
+
+            <div className="print-section">
+              <div className="print-title">Audit-Log / Verlauf</div>
+
+              {auditSortedAsc.length ? (
+                auditSortedAsc.map((e) => {
+                  const { title, detail, actor: a } = describeAuditEntry(e);
+                  return (
+                    <div key={e.id || `${e.at}-${e.type}`} style={{ paddingBottom: 10 }}>
+                      <div className="print-audit-row">
+                        <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>{fmtDateTime(e?.at)}</div>
+                        <div style={{ fontWeight: 700 }}>
+                          {title}
+                          {detail ? (
+                            <div style={{ fontWeight: 400, fontSize: 12, opacity: 0.85, marginTop: 2 }}>{detail}</div>
+                          ) : null}
+                        </div>
+                        <div style={{ textAlign: "right", opacity: 0.85 }}>{nonEmpty(a)}</div>
+                      </div>
+
+                      <PrintDiffList diff={e?.diff} />
+                    </div>
+                  );
+                })
+              ) : (
+                <div>Keine Audit-Einträge vorhanden.</div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </section>
   );
@@ -727,4 +972,26 @@ const twoCol = {
 const colStack = {
   display: "grid",
   gap: 12,
+};
+
+const footerRow = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 10,
+  flexWrap: "wrap",
+};
+
+const labelInline = {
+  display: "grid",
+  gap: 4,
+  fontSize: 12,
+  color: "var(--muted)",
+};
+
+const inputInline = {
+  padding: "6px 8px",
+  border: "1px solid rgba(0,0,0,0.18)",
+  borderRadius: 8,
+  minWidth: 160,
 };

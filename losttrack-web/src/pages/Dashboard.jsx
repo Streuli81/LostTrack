@@ -367,65 +367,7 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-
-        {/* Audit */}
-        <div
-          style={{
-            border: "1px solid rgba(0,0,0,0.1)",
-            borderRadius: 12,
-            padding: 12,
-            background: "#fff",
-          }}
-        >
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>
-            Audit-Log ({auditSorted.length})
-          </div>
-
-          {auditSorted.length === 0 ? (
-            <div style={{ color: "var(--muted)" }}>
-              Noch keine Audit-Ereignisse.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {auditSorted.slice(0, 20).map((ev) => (
-                <div
-                  key={ev.id}
-                  style={{
-                    border: "1px solid rgba(0,0,0,0.08)",
-                    borderRadius: 10,
-                    padding: 10,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 10,
-                    }}
-                  >
-                    <div style={{ fontWeight: 800 }}>
-                      {safe(ev.type ?? "EVENT")}
-                    </div>
-                    <div
-                      style={{
-                        color: "var(--muted)",
-                        fontSize: 12,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {fmt(ev.at)}
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Fundnr.: {safe(ev.fundNo ?? "—")}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+       </div>
     </section>
   );
 }

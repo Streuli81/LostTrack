@@ -9,8 +9,9 @@ import { validateLostItem, VALIDATION_MODE } from "../../domain/lostItem.validat
 const STORAGE_VERSION = "v1";
 
 const KEY_RECORDS = `lostItems.records.${STORAGE_VERSION}`; // definitiv erfasste Fundsachen
-const KEY_DRAFTS  = `lostItems.drafts.${STORAGE_VERSION}`;  // Entwürfe / Vorschau
-const KEY_AUDIT   = `lostItems.audit.${STORAGE_VERSION}`;   // append-only Log
+const KEY_DRAFTS = `lostItems.drafts.${STORAGE_VERSION}`; // Entwürfe / Vorschau
+const KEY_AUDIT = `lostItems.audit.${STORAGE_VERSION}`; // append-only Log
+const KEY_COUNTERS = `lostItems.counters.${STORAGE_VERSION}`; // Zähler (z.B. Quittungen, Fundnummern)
 
 /* -------------------------------------------------
  * READ
@@ -39,8 +40,22 @@ export function getLostItemById(id) {
 }
 
 /**
+ * ✅ Neu: nächste Fundnummer "anzeigen" (ohne Counter zu erhöhen).
+ * Damit kannst du beim Start der Erfassung sofort die Nummer anzeigen,
+ * ohne dass Lücken entstehen.
+ */
+export function peekNextFundNo() {
+  const now = new Date().toISOString();
+  const records = storage.getJson(KEY_RECORDS, []);
+  return peekFundNo(now, records);
+}
+
+/**
  * Suche in Records (AND-Verknüpfung)
  * q: { fundNo, finder, item, location, dateFrom, dateTo }
+ *
+ * ⚠️ Du speicherst final DD.MM.YYYY.
+ * Für den Vergleich wandeln wir DD.MM.YYYY → YYYY-MM-DD um.
  */
 export function searchLostItems(q = {}) {
   const norm = (s) => (s ?? "").toString().trim().toLowerCase();
@@ -50,24 +65,27 @@ export function searchLostItems(q = {}) {
   const item = norm(q.item);
   const location = norm(q.location);
 
+  // Filterwerte kommen als YYYY-MM-DD (dein UI-Filter), das lassen wir so.
   const df = (q.dateFrom || "").trim(); // YYYY-MM-DD
-  const dt = (q.dateTo || "").trim();   // YYYY-MM-DD
+  const dt = (q.dateTo || "").trim(); // YYYY-MM-DD
 
-  const inDateRange = (dateStr) => {
+  const toIsoDateForCompare = (storedDate) => {
+    // storedDate ist bei dir final DD.MM.YYYY (oder leer)
+    return ddmmyyyyToIso(storedDate) || "";
+  };
+
+  const inDateRange = (storedDateStr) => {
     if (!df && !dt) return true;
-    if (!dateStr) return false;
-
-    const d = String(dateStr).slice(0, 10);
-    if (df && d < df) return false;
-    if (dt && d > dt) return false;
+    const iso = toIsoDateForCompare(storedDateStr); // YYYY-MM-DD
+    if (!iso) return false;
+    if (df && iso < df) return false;
+    if (dt && iso > dt) return false;
     return true;
   };
 
   const records = storage.getJson(KEY_RECORDS, []);
 
-  const sorted = [...records].sort((a, b) =>
-    (b?.createdAt || "").localeCompare(a?.createdAt || "")
-  );
+  const sorted = [...records].sort((a, b) => (b?.createdAt || "").localeCompare(a?.createdAt || ""));
 
   return normalizeAll(
     sorted.filter((r) => {
@@ -148,14 +166,11 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
  * WRITE – UPDATE (EDIT-MODE)
  * ------------------------------------------------- */
 
-/**
- * Aktualisiert eine bestehende Fundsache (Bearbeiten).
- * - keine neue Fundnummer
- * - harte Validierung (COMMIT)
- * - Audit-Eintrag mit before/after + diff
- */
 export function updateLostItem(input, { actor = null } = {}) {
-  const { ok, value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.COMMIT });
+  // ✅ tolerant einlesen → ISO fürs Validieren
+  const normalizedInput = normalizeFoundAtForValidation(input);
+
+  const { ok, value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.COMMIT });
 
   if (!ok) return { ok: false, errors };
   if (!value.id) return { ok: false, errors: { id: "Fehlende ID." } };
@@ -167,18 +182,22 @@ export function updateLostItem(input, { actor = null } = {}) {
 
   const before = slimSnapshot(existing);
 
+  // ✅ final speichern: DD.MM.YYYY / HH.MM
+  const formattedValue = formatFoundAtDisplay(value);
+
   const updated = normalizeOne({
     ...existing,
-    ...value,
+    ...formattedValue,
     fundNo: existing.fundNo, // ❗ Fundnummer bleibt unverändert
 
-    // darf nicht verloren gehen:
-    investigationSteps: Array.isArray(value.investigationSteps)
-      ? value.investigationSteps
+    investigationSteps: Array.isArray(formattedValue.investigationSteps)
+      ? formattedValue.investigationSteps
       : existing.investigationSteps,
 
-    owner: value.owner ?? existing.owner,
-    collector: value.collector ?? existing.collector,
+    owner: formattedValue.owner ?? existing.owner,
+    collector: formattedValue.collector ?? existing.collector,
+
+    receipts: Array.isArray(existing.receipts) ? existing.receipts : [],
 
     updatedAt: now,
   });
@@ -210,15 +229,16 @@ export function updateLostItem(input, { actor = null } = {}) {
  * ------------------------------------------------- */
 
 /**
- * Speichert oder aktualisiert einen Entwurf (Vorschau).
- * (optional actor via 2. Parameter, bleibt kompatibel)
+ * ✅ Wichtig: Draft vergibt KEINE Fundnummer.
+ * Aber Datum/Zeit wird ebenfalls final formatiert gespeichert.
  */
 export function saveDraft(input, { actor = null } = {}) {
-  const { value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.DRAFT });
+  const normalizedInput = normalizeFoundAtForValidation(input);
+  const { value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.DRAFT });
 
-  const draft = normalizeOne(value);
+  const formatted = formatFoundAtDisplay(value);
+  const draft = normalizeOne(formatted);
 
-  // Bei Draft ist "before" nicht zwingend, aber nützlich wenn existiert
   const drafts = storage.getJson(KEY_DRAFTS, []);
   const existing = drafts.find((d) => d?.id === draft.id) || null;
   const before = existing ? slimSnapshot(normalizeOne(existing)) : null;
@@ -249,19 +269,37 @@ export function saveDraft(input, { actor = null } = {}) {
  * ------------------------------------------------- */
 
 /**
- * Speichert eine Fundsache definitiv (Neu-Erfassung).
- * (optional actor via 2. Parameter, bleibt kompatibel)
+ * ✅ Fix: Fundnummer wird beim Commit automatisch vergeben (einmalig).
+ * - Wenn input.fundNo fehlt → generieren
+ * - Wenn input.fundNo bereits existiert → neu generieren (safety)
  */
 export function commitLostItem(input, { actor = null } = {}) {
-  const { ok, value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.COMMIT });
-
+  const normalizedInput = normalizeFoundAtForValidation(input);
+  const { ok, value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.COMMIT });
   if (!ok) return { ok: false, errors };
 
-  const record = normalizeOne({ ...value });
-
+  let record = normalizeOne({ ...value });
   if (!record.id) record.id = cryptoId();
 
+  // ✅ final speichern: DD.MM.YYYY / HH.MM
+  record = formatFoundAtDisplay(record);
+
+  const now = new Date().toISOString();
   const records = storage.getJson(KEY_RECORDS, []);
+
+  const inNo = (record.fundNo ?? "").toString().trim();
+  const fundNoExists = inNo ? records.some((r) => (r?.fundNo ?? "").toString().trim() === inNo) : false;
+  const needsFundNo = !inNo || fundNoExists;
+
+  if (needsFundNo) {
+    record = {
+      ...record,
+      fundNo: nextFundNo(now, records), // ✅ “verbraucht” die Nummer
+    };
+  } else {
+    record = { ...record, fundNo: normalizeFundNo(inNo) };
+  }
+
   const nextRecords = upsertById(records, record);
   storage.setJson(KEY_RECORDS, nextRecords);
 
@@ -275,7 +313,7 @@ export function commitLostItem(input, { actor = null } = {}) {
     snapshot: {
       id: record.id,
       actor,
-      at: new Date().toISOString(),
+      at: now,
       after,
     },
     diff: null,
@@ -285,13 +323,74 @@ export function commitLostItem(input, { actor = null } = {}) {
 }
 
 /* -------------------------------------------------
+ * WRITE – QUITTUNGEN (Metadaten + Audit)
+ * ------------------------------------------------- */
+
+export function createReceipt({
+  id,
+  receiptType,
+  recipient,
+  amount = null,
+  actor = null,
+  notes = null,
+} = {}) {
+  if (!id) return { ok: false, error: "Missing id" };
+  if (!receiptType) return { ok: false, error: "Missing receiptType" };
+
+  const current = getLostItemById(id);
+  if (!current) return { ok: false, error: "Not found" };
+
+  const now = new Date().toISOString();
+
+  const before = slimSnapshot(current);
+
+  const receiptId = nextReceiptId(now);
+
+  const receipt = {
+    id: receiptId,
+    type: String(receiptType).toUpperCase(),
+    recipient: (recipient ?? "").toString().trim(),
+    amount: normalizeAmount(amount),
+    notes: notes ? String(notes) : null,
+    printedAt: now,
+    printedBy: (actor ?? "").toString().trim() || "M. S.",
+  };
+
+  const updated = normalizeOne({
+    ...current,
+    receipts: [...(current.receipts || []), receipt],
+    updatedAt: now,
+  });
+
+  const after = slimSnapshot(updated);
+
+  persistRecord(updated);
+
+  appendAudit({
+    type: "RECEIPT_PRINTED",
+    fundNo: updated.fundNo || null,
+    snapshot: {
+      id: updated.id,
+      receipt,
+      actor: receipt.printedBy,
+      at: now,
+      before,
+      after,
+    },
+    diff: diffSnapshots(before, after),
+  });
+
+  return { ok: true, item: updated, receipt };
+}
+
+export function printReceipt(params) {
+  return createReceipt(params);
+}
+
+/* -------------------------------------------------
  * WRITE – ERMITTLUNGSSCHRITTE
  * ------------------------------------------------- */
 
-/**
- * Fügt einen Ermittlungsschritt zu einer bestehenden Fundsache hinzu.
- * step: { at?: ISO-string, who: string, what: string }
- */
 export function addInvestigationStep({ id, step, actor = null }) {
   if (!id) return { ok: false, error: "Missing id" };
 
@@ -334,7 +433,7 @@ export function addInvestigationStep({ id, step, actor = null }) {
     fundNo: updated.fundNo || null,
     snapshot: {
       id: updated.id,
-      step: newStep, // ✅ enthält what/who/at
+      step: newStep,
       actor,
       at: now,
       before,
@@ -346,9 +445,6 @@ export function addInvestigationStep({ id, step, actor = null }) {
   return { ok: true, item: updated, step: newStep };
 }
 
-/**
- * Löscht einen Ermittlungsschritt.
- */
 export function deleteInvestigationStep({ id, stepId, actor = null }) {
   if (!id) return { ok: false, error: "Missing id" };
   if (!stepId) return { ok: false, error: "Missing stepId" };
@@ -387,7 +483,7 @@ export function deleteInvestigationStep({ id, stepId, actor = null }) {
     snapshot: {
       id: updated.id,
       stepId,
-      step: stepDeleted, // ✅ optional: damit UI "was gelöscht" anzeigen kann
+      step: stepDeleted,
       actor,
       at: now,
       before,
@@ -440,7 +536,6 @@ export function updateFinder({ id, finder, actor = null }) {
     diff: diffSnapshots(before, after),
   });
 
-  // ✅ Auto-Ermittlungsschritt: enthält "what" bereits
   appendAutoInvestigationStep(updated, actor, buildAutoText("Finder", clean));
 
   return { ok: true, item: updated };
@@ -497,7 +592,6 @@ export function updateCollector({ id, collector, actor = null }) {
 
   const before = slimSnapshot(current);
 
-  // collector kann bewusst null sein = entfernen
   const clean = collector === null ? null : sanitizeParty(collector);
 
   const updated = normalizeOne({
@@ -578,7 +672,7 @@ function appendAudit(event) {
 
 /**
  * Slim snapshot für Audit.
- * Wichtig: stabil und UI-freundlich.
+ * (Datum/Zeit bleiben im gespeicherten Format DD.MM.YYYY / HH.MM)
  */
 function slimSnapshot(item) {
   return {
@@ -605,34 +699,35 @@ function slimSnapshot(item) {
       : [],
     owner: item?.owner || null,
     collector: item?.collector || null,
+
+    receipts: Array.isArray(item?.receipts)
+      ? item.receipts.map((r) => ({
+          id: r?.id,
+          type: r?.type,
+          recipient: r?.recipient,
+          amount: r?.amount ?? null,
+          printedAt: r?.printedAt,
+          printedBy: r?.printedBy,
+          notes: r?.notes ?? null,
+        }))
+      : [],
   };
 }
 
-/**
- * Diff zweier slimSnapshots.
- * Gibt eine Liste mit geänderten Pfaden zurück:
- * [{ path: "finder.phone", from: "...", to: "..." }, ...]
- *
- * - behandelt Objekte/Arrays rekursiv
- * - Arrays: vergleicht length + einzelne Einträge (bei investigationSteps werden
- *   in der Regel neue IDs hinzugefügt -> es wird sichtbar)
- */
 function diffSnapshots(before, after) {
   if (!before || !after) return null;
 
   const changes = [];
-
   const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
 
   const eq = (a, b) => {
     if (a === b) return true;
-    // simple NaN handling
-    if (typeof a === "number" && typeof b === "number" && Number.isNaN(a) && Number.isNaN(b)) return true;
+    if (typeof a === "number" && typeof b === "number" && Number.isNaN(a) && Number.isNaN(b))
+      return true;
     return false;
   };
 
   const walk = (a, b, path) => {
-    // primitives / null
     const aIsObj = isObj(a);
     const bIsObj = isObj(b);
 
@@ -644,10 +739,10 @@ function diffSnapshots(before, after) {
       return;
     }
 
-    // arrays
     if (aIsArr || bIsArr) {
       const aa = aIsArr ? a : [];
       const bb = bIsArr ? b : [];
+
       if (aa.length !== bb.length) {
         changes.push({ path: `${path}.length`, from: aa.length, to: bb.length });
       }
@@ -656,8 +751,8 @@ function diffSnapshots(before, after) {
       for (let i = 0; i < max; i++) {
         const ai = aa[i];
         const bi = bb[i];
-        // bei Arrays von Objekten vergleichen wir grob via JSON
         const p = `${path}[${i}]`;
+
         if (isObj(ai) || isObj(bi) || Array.isArray(ai) || Array.isArray(bi)) {
           const aj = ai === undefined ? null : ai;
           const bj = bi === undefined ? null : bi;
@@ -671,7 +766,6 @@ function diffSnapshots(before, after) {
       return;
     }
 
-    // objects
     const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
     for (const k of keys) {
       const nextPath = path ? `${path}.${k}` : k;
@@ -695,17 +789,14 @@ function cryptoId() {
   return "id_" + Date.now().toString(16) + "_" + Math.random().toString(16).slice(2);
 }
 
-/**
- * Migration/Schema-Guard:
- * - stellt sicher, dass investigationSteps immer ein Array ist
- * - owner/collector existieren zumindest als null/obj (optional)
- */
 function normalizeOne(item) {
   if (!item) return item;
   const out = { ...item };
   if (!Array.isArray(out.investigationSteps)) out.investigationSteps = [];
   if (!("owner" in out)) out.owner = null;
   if (!("collector" in out)) out.collector = null;
+  if (!Array.isArray(out.receipts)) out.receipts = [];
+  if (!out.foundAt || typeof out.foundAt !== "object") out.foundAt = { date: "", time: "", location: "" };
   return out;
 }
 
@@ -750,20 +841,15 @@ function sanitizeFinder(f) {
 
 function appendAutoInvestigationStep(item, actor, what) {
   const who = (actor ?? "").toString().trim() || "System";
-  const step = { who, what };
 
-  // Wir nutzen die bestehende addInvestigationStep-Logik nicht direkt,
-  // weil die wiederum getLostItemById liest und nochmal speichert.
-  // Hier hängen wir den Step minimal-invasiv direkt an und speichern.
   const now = new Date().toISOString();
   const newStep = {
     id: cryptoId(),
     at: now,
-    who: step.who,
-    what: step.what,
+    who,
+    what,
   };
 
-  // Before/After + Diff für den Auto-Step
   const before = slimSnapshot(item);
 
   const updated = normalizeOne({
@@ -781,8 +867,8 @@ function appendAutoInvestigationStep(item, actor, what) {
     fundNo: updated.fundNo || null,
     snapshot: {
       id: updated.id,
-      step: newStep,     // ✅ enthält what/who/at
-      actor: who,        // ✅ explizit
+      step: newStep,
+      actor: who,
       at: now,
       before,
       after,
@@ -803,4 +889,247 @@ function buildAutoText(roleLabel, p) {
 
   if (parts.length === 0) return `${roleLabel} erfasst/aktualisiert.`;
   return `${roleLabel} erfasst/aktualisiert (${parts.join(", ")}).`;
+}
+
+/* -------------------------------------------------
+ * DATUM / ZEIT NORMALISIERUNG
+ * - Eingabe tolerant
+ * - Validierung bekommt ISO (YYYY-MM-DD / HH:MM)
+ * - Speicherung final: DD.MM.YYYY / HH.MM
+ * ------------------------------------------------- */
+
+function normalizeFoundAtForValidation(input) {
+  const out = { ...input };
+  const fa = { ...(out.foundAt || {}) };
+
+  // tolerant lesen
+  const isoDate = normalizeDateToIsoLoose(fa.date);
+  const isoTime = normalizeTimeToIsoLoose(fa.time);
+
+  // validator bekommt ISO
+  if ("date" in fa) fa.date = isoDate;
+  if ("time" in fa) fa.time = isoTime;
+
+  out.foundAt = fa;
+  return out;
+}
+
+function formatFoundAtDisplay(input) {
+  const out = { ...input };
+  const fa = { ...(out.foundAt || {}) };
+
+  // value kann aus Validator kommen (ISO), oder bereits was anderes
+  const isoDate = normalizeDateToIsoLoose(fa.date);
+  const isoTime = normalizeTimeToIsoLoose(fa.time);
+
+  fa.date = isoToDdMmYyyy(isoDate) || (fa.date ?? "");
+  fa.time = isoTimeToHhDotMm(isoTime) || (fa.time ?? "");
+
+  out.foundAt = fa;
+  return out;
+}
+
+// akzeptiert: YYYY-MM-DD oder DD.MM.YYYY oder D.M.YY oder D/M/YYYY etc.
+function normalizeDateToIsoLoose(v) {
+  const s = (v ?? "").toString().trim();
+  if (!s) return s;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // DD.MM.YYYY / D.M.YY / mit .-/ gemischt
+  const m = s.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})$/);
+  if (!m) return s;
+
+  let dd = Number(m[1]);
+  let mm = Number(m[2]);
+  let yy = Number(m[3]);
+
+  if (!Number.isFinite(dd) || !Number.isFinite(mm) || !Number.isFinite(yy)) return s;
+
+  if (yy < 100) yy = 2000 + yy; // CH-Usecase (26 -> 2026)
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return s;
+
+  return `${String(yy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(
+    2,
+    "0"
+  )}`;
+}
+
+// akzeptiert: HH:MM, HH.MM, "1450", "930", "9", "14.5"
+function normalizeTimeToIsoLoose(v) {
+  const s0 = (v ?? "").toString().trim();
+  if (!s0) return s0;
+
+  // HH:MM
+  if (/^\d{1,2}:\d{2}$/.test(s0)) {
+    const [h, m] = s0.split(":").map((x) => Number(x));
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    }
+    return s0;
+  }
+
+  // HH.MM (mit Punkt)
+  if (/^\d{1,2}\.\d{1,2}$/.test(s0)) {
+    const [hS, mS] = s0.split(".");
+    const h = Number(hS);
+    const m = Number(mS);
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    }
+    return s0;
+  }
+
+  // "14.5" -> 14:05
+  const dot = s0.replace(",", ".").match(/^(\d{1,2})\.(\d{1,2})$/);
+  if (dot) {
+    const h = Number(dot[1]);
+    const m = Number(dot[2]);
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    }
+    return s0;
+  }
+
+  // "1450" / "930" / "9"
+  if (/^\d{1,4}$/.test(s0)) {
+    const n = s0.padStart(4, "0");
+    const h = Number(n.slice(0, 2));
+    const m = Number(n.slice(2, 4));
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    }
+  }
+
+  return s0;
+}
+
+function isoToDdMmYyyy(iso) {
+  const s = (iso ?? "").toString().trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+function ddmmyyyyToIso(ddmmyyyy) {
+  const s = (ddmmyyyy ?? "").toString().trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s; // falls doch mal ISO
+  const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!m) return null;
+  const dd = m[1];
+  const mm = m[2];
+  const yy = m[3];
+  return `${yy}-${mm}-${dd}`;
+}
+
+function isoTimeToHhDotMm(isoTime) {
+  const s = (isoTime ?? "").toString().trim();
+  if (!/^\d{2}:\d{2}$/.test(s) && !/^\d{1,2}:\d{2}$/.test(s)) return null;
+  const [hS, mS] = s.split(":");
+  const h = String(Number(hS)).padStart(2, "0");
+  const m = String(Number(mS)).padStart(2, "0");
+  return `${h}.${m}`;
+}
+
+/* -------------------------------------------------
+ * NUMMERIERUNG
+ * - Fundnummer: YYYY-00001 (pro Jahr neuer Zähler)
+ * - Quittungen: Q-YYYY-NNNN
+ * ------------------------------------------------- */
+
+function normalizeAmount(amount) {
+  if (amount === null || amount === undefined) return null;
+  const s = String(amount).trim();
+  if (!s) return null;
+  const n = Number(s);
+  if (Number.isNaN(n)) return null;
+  return n;
+}
+
+function getCounters() {
+  const obj = storage.getJson(KEY_COUNTERS, {});
+  return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : {};
+}
+
+function setCounters(obj) {
+  storage.setJson(KEY_COUNTERS, obj && typeof obj === "object" ? obj : {});
+}
+
+function nextReceiptId(isoNow) {
+  const year = String(isoNow).slice(0, 4);
+  const key = `receipt:${year}`;
+
+  const counters = getCounters();
+  const current = Number(counters[key] || 0);
+  const next = current + 1;
+
+  counters[key] = next;
+  setCounters(counters);
+
+  const nnnn = String(next).padStart(4, "0");
+  return `Q-${year}-${nnnn}`;
+}
+
+/**
+ * ✅ Peek: nächste Fundnummer (ohne Counter++)
+ */
+function peekFundNo(isoNow, existingRecords = []) {
+  const year = String(isoNow).slice(0, 4);
+  const key = `fundNo:${year}`;
+
+  const counters = getCounters();
+  let n = Number(counters[key] || 0);
+
+  while (true) {
+    const candidate = `${year}-${String(n + 1).padStart(5, "0")}`;
+    const exists = existingRecords.some((r) => (r?.fundNo ?? "").toString().trim() === candidate);
+    if (!exists) return candidate;
+    n += 1;
+  }
+}
+
+/**
+ * ✅ Fundnummern-Generator (verbraucht Counter)
+ * - pro Jahr neuer Zähler
+ * - safety: prüft existierende Records
+ */
+function nextFundNo(isoNow, existingRecords = []) {
+  const year = String(isoNow).slice(0, 4);
+  const key = `fundNo:${year}`;
+
+  const counters = getCounters();
+  let n = Number(counters[key] || 0);
+
+  while (true) {
+    n += 1;
+    const fundNo = `${year}-${String(n).padStart(5, "0")}`;
+
+    const exists = existingRecords.some((r) => (r?.fundNo ?? "").toString().trim() === fundNo);
+    if (!exists) {
+      counters[key] = n;
+      setCounters(counters);
+      return fundNo;
+    }
+  }
+}
+
+/**
+ * Normalisiert Fundnummern-Strings, wenn jemand sie manuell schreibt.
+ * Akzeptiert:
+ * - "2026-1" -> "2026-00001"
+ * - "2026-00001" bleibt
+ */
+function normalizeFundNo(input) {
+  const s = (input ?? "").toString().trim();
+  if (!s) return s;
+
+  const m = s.match(/^(\d{4})-(\d+)$/);
+  if (!m) return s;
+
+  const year = m[1];
+  const n = Number(m[2]);
+  if (!Number.isFinite(n) || n <= 0) return s;
+
+  return `${year}-${String(n).padStart(5, "0")}`;
 }

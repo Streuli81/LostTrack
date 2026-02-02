@@ -7,6 +7,10 @@ export default function PartyCardEditor({
   onSave,
   showRewardRequested = false,
   allowClear = false, // für Abholer: "Entfernen"
+
+  // ✅ NEU: Footer-Slot für "Quittungen / Zusatzfelder"
+  footer = null, // ReactNode
+  footerDivider = true, // Divider-Linie zwischen Form und Footer
 }) {
   const [value, setValue] = useState(empty(showRewardRequested));
   const [busy, setBusy] = useState(false);
@@ -71,10 +75,30 @@ export default function PartyCardEditor({
       {msg ? <Notice kind="ok">{msg}</Notice> : null}
 
       <div style={grid2}>
-        <Field label="Name" value={value.name} onChange={(v) => setValue({ ...value, name: v })} disabled={busy} />
-        <Field label="Adresse" value={value.address} onChange={(v) => setValue({ ...value, address: v })} disabled={busy} />
-        <Field label="Telefon" value={value.phone} onChange={(v) => setValue({ ...value, phone: v })} disabled={busy} />
-        <Field label="E-Mail" value={value.email} onChange={(v) => setValue({ ...value, email: v })} disabled={busy} />
+        <Field
+          label="Name"
+          value={value.name}
+          onChange={(v) => setValue({ ...value, name: v })}
+          disabled={busy}
+        />
+        <Field
+          label="Adresse"
+          value={value.address}
+          onChange={(v) => setValue({ ...value, address: v })}
+          disabled={busy}
+        />
+        <Field
+          label="Telefon"
+          value={value.phone}
+          onChange={(v) => setValue({ ...value, phone: v })}
+          disabled={busy}
+        />
+        <Field
+          label="E-Mail"
+          value={value.email}
+          onChange={(v) => setValue({ ...value, email: v })}
+          disabled={busy}
+        />
       </div>
 
       {showRewardRequested ? (
@@ -99,6 +123,14 @@ export default function PartyCardEditor({
           Speichern
         </button>
       </div>
+
+      {/* ✅ NEU: Footer innerhalb der Karte */}
+      {footer ? (
+        <div style={{ marginTop: 12 }}>
+          {footerDivider ? <div style={divider} /> : null}
+          <div style={{ marginTop: 10 }}>{footer}</div>
+        </div>
+      ) : null}
     </Card>
   );
 }
@@ -150,6 +182,11 @@ const grid2 = {
   display: "grid",
   gridTemplateColumns: "1fr 1fr",
   gap: 10,
+};
+
+const divider = {
+  height: 1,
+  background: "rgba(255,255,255,0.12)",
 };
 
 function empty(showRewardRequested) {

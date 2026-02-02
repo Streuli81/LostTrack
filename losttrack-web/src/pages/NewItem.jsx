@@ -46,12 +46,15 @@ export default function NewItem() {
         return;
       }
 
-      setData(existing);
+      // ✅ Normalisieren beim Laden (damit Anzeige final ist)
+      const normalizedExisting = normalizeLostItemDates(existing);
+
+      setData(normalizedExisting);
 
       // Fundnummer im Edit-Modus immer als verbindlich anzeigen
-      setSavedFundNumber(existing.fundNo || "");
+      setSavedFundNumber(normalizedExisting.fundNo || "");
       setIsFundNumberCommitted(true);
-      setFundNumberPreview(existing.fundNo || "");
+      setFundNumberPreview(normalizedExisting.fundNo || "");
       return;
     }
 
@@ -78,9 +81,11 @@ export default function NewItem() {
   }
 
   function showErrors(mode, current) {
-    const res = validateLostItem(current, { mode });
+    // ✅ Sicherstellen: vor Validierung sind Datum/Zeit im finalen Format
+    const normalized = normalizeLostItemDates(current);
+    const res = validateLostItem(normalized, { mode });
     setErrors(res.errors);
-    return res;
+    return { ...res, value: normalized };
   }
 
   function handleSaveDraft() {
@@ -197,6 +202,8 @@ export default function NewItem() {
           onChange={(e) => setField("caseWorker.id", e.target.value)}
           style={inputStyle(!!err("caseWorker.id"))}
           placeholder='z.B. "ms"'
+          autoComplete="off"
+          name="caseworker_id"
         />
       </Field>
 
@@ -207,28 +214,42 @@ export default function NewItem() {
           onChange={(e) => setField("caseWorker.name", e.target.value)}
           style={inputStyle(!!err("caseWorker.name"))}
           placeholder='z.B. "M. Streuli"'
+          autoComplete="off"
+          name="caseworker_name"
         />
       </Field>
 
       {/* Fundort/-zeit */}
       <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
-        <Field label="Funddatum (YYYY-MM-DD)" error={err("foundAt.date")}>
+        <Field label="Funddatum" error={err("foundAt.date")}>
           <input
             type="text"
             value={data.foundAt.date}
             onChange={(e) => setField("foundAt.date", e.target.value)}
+            onBlur={(e) => {
+              const normalized = normalizeDate(e.target.value);
+              setField("foundAt.date", normalized);
+            }}
             style={inputStyle(!!err("foundAt.date"))}
-            placeholder="2026-01-25"
+            placeholder="25.01.2026"
+            autoComplete="off"
+            name="found_date"
           />
         </Field>
 
-        <Field label="Fundzeit (HH:MM)" error={err("foundAt.time")}>
+        <Field label="Fundzeit" error={err("foundAt.time")}>
           <input
             type="text"
             value={data.foundAt.time}
             onChange={(e) => setField("foundAt.time", e.target.value)}
+            onBlur={(e) => {
+              const normalized = normalizeTime(e.target.value);
+              setField("foundAt.time", normalized);
+            }}
             style={inputStyle(!!err("foundAt.time"))}
-            placeholder="14:30"
+            placeholder="14.30"
+            autoComplete="off"
+            name="found_time"
           />
         </Field>
       </div>
@@ -240,6 +261,8 @@ export default function NewItem() {
           onChange={(e) => setField("foundAt.location", e.target.value)}
           style={inputStyle(!!err("foundAt.location"))}
           placeholder="z.B. Bahnhof, Perron 2"
+          autoComplete="off"
+          name="found_location"
         />
       </Field>
 
@@ -253,6 +276,20 @@ export default function NewItem() {
           onChange={(e) => setField("finder.name", e.target.value)}
           style={inputStyle(!!err("finder.name"))}
           placeholder="Name Finder"
+          autoComplete="off"
+          name="finder_name"
+        />
+      </Field>
+
+      <Field label="Adresse" error={err("finder.address")}>
+        <input
+          autoComplete="off"
+          name="finder_address"
+          type="text"
+          value={data.finder.address}
+          onChange={(e) => setField("finder.address", e.target.value)}
+          style={inputStyle(!!err("finder.address"))}
+          placeholder="Adresse Finder"
         />
       </Field>
 
@@ -263,6 +300,8 @@ export default function NewItem() {
           onChange={(e) => setField("finder.phone", e.target.value)}
           style={inputStyle(!!err("finder.phone"))}
           placeholder="+41 ..."
+          autoComplete="off"
+          name="finder_phone"
         />
       </Field>
 
@@ -273,6 +312,8 @@ export default function NewItem() {
           onChange={(e) => setField("finder.email", e.target.value)}
           style={inputStyle(!!err("finder.email"))}
           placeholder="name@mail.ch"
+          autoComplete="off"
+          name="finder_email"
         />
       </Field>
 
@@ -282,6 +323,7 @@ export default function NewItem() {
             type="checkbox"
             checked={!!data.finder.rewardRequested}
             onChange={(e) => setField("finder.rewardRequested", e.target.checked)}
+            name="finder_reward_requested"
           />
           Finderlohn gewünscht
         </label>
@@ -297,6 +339,8 @@ export default function NewItem() {
           onChange={(e) => setField("item.predefinedKey", e.target.value)}
           style={inputStyle(!!err("item.predefinedKey"))}
           placeholder='z.B. "wallet"'
+          autoComplete="off"
+          name="item_predefined_key"
         />
       </Field>
 
@@ -307,6 +351,8 @@ export default function NewItem() {
           onChange={(e) => setField("item.manualLabel", e.target.value)}
           style={inputStyle(!!err("item.manualLabel"))}
           placeholder='z.B. "Schlüsselbund"'
+          autoComplete="off"
+          name="item_manual_label"
         />
       </Field>
 
@@ -320,6 +366,8 @@ export default function NewItem() {
             resize: "vertical",
           }}
           placeholder="Aussehen, Nummern, Besonderheiten..."
+          autoComplete="off"
+          name="item_description"
         />
       </Field>
 
@@ -398,4 +446,182 @@ function setByPath(obj, path, value) {
 
   cur[parts[parts.length - 1]] = value;
   return copy;
+}
+
+/* ----------------- Date / Time normalization ----------------- */
+
+/**
+ * Akzeptiert:
+ * - DD.MM.YYYY
+ * - DD-MM-YYYY
+ * - DD/MM/YYYY
+ * - YYYY-MM-DD
+ * - YYYY/MM/DD
+ * - YYYY.MM.DD
+ * - DDMMYYYY
+ * - DDMMYY
+ * - DDMM
+ *
+ * Gibt zurück:
+ * - DD.MM.YYYY
+ * - oder "" bei ungültig
+ */
+function normalizeDate(value) {
+  if (!value) return "";
+  const v = String(value).trim();
+  if (!v) return "";
+
+  let m;
+
+  // ISO / International: YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+  m = v.match(/^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})$/);
+  if (m) {
+    const [, y, mo, d] = m;
+    const dd = pad2(d);
+    const mm = pad2(mo);
+    if (!isValidDateParts(dd, mm, y)) return "";
+    return `${dd}.${mm}.${y}`;
+  }
+
+  // EU: DD-MM-YYYY / DD/MM/YYYY / DD.MM.YYYY
+  m = v.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$/);
+  if (m) {
+    const [, d, mo, y] = m;
+    const dd = pad2(d);
+    const mm = pad2(mo);
+    if (!isValidDateParts(dd, mm, y)) return "";
+    return `${dd}.${mm}.${y}`;
+  }
+
+  // NUR ZIFFERN: DDMMYYYY
+  m = v.match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (m) {
+    const [, d, mo, y] = m;
+    const dd = pad2(d);
+    const mm = pad2(mo);
+    if (!isValidDateParts(dd, mm, y)) return "";
+    return `${dd}.${mm}.${y}`;
+  }
+
+  // NUR ZIFFERN: DDMMYY -> 20YY
+  m = v.match(/^(\d{2})(\d{2})(\d{2})$/);
+  if (m) {
+    const [, d, mo, yy] = m;
+    const y = String(2000 + Number(yy));
+    const dd = pad2(d);
+    const mm = pad2(mo);
+    if (!isValidDateParts(dd, mm, y)) return "";
+    return `${dd}.${mm}.${y}`;
+  }
+
+  // NUR ZIFFERN: DDMM -> aktuelles Jahr
+  m = v.match(/^(\d{2})(\d{2})$/);
+  if (m) {
+    const [, d, mo] = m;
+    const y = String(new Date().getFullYear());
+    const dd = pad2(d);
+    const mm = pad2(mo);
+    if (!isValidDateParts(dd, mm, y)) return "";
+    return `${dd}.${mm}.${y}`;
+  }
+
+  return "";
+}
+
+/**
+ * Akzeptiert:
+ * - HH.MM
+ * - HH:MM
+ * - HHMM
+ * - HMM   (z. B. 930)
+ * - H / HH
+ *
+ * Gibt zurück:
+ * - HH.MM
+ * - oder "" bei ungültig
+ */
+function normalizeTime(value) {
+  if (!value) return "";
+  const v = String(value).trim();
+  if (!v) return "";
+
+  let m;
+
+  // NUR STUNDE: "9" oder "14" -> HH.00
+  m = v.match(/^(\d{1,2})$/);
+  if (m) {
+    const hh = pad2(m[1]);
+    const mm = "00";
+    if (!isValidTimeParts(hh, mm)) return "";
+    return `${hh}.${mm}`;
+  }
+
+  // HH:MM oder HH.MM (Minuten auch 1-stellig)
+  m = v.match(/^(\d{1,2})[:.](\d{1,2})$/);
+  if (m) {
+    const [, h, min] = m;
+    const hh = pad2(h);
+    const mm = pad2(min);
+    if (!isValidTimeParts(hh, mm)) return "";
+    return `${hh}.${mm}`;
+  }
+
+  // HHMM oder HMM (z. B. 930 -> 09.30)
+  m = v.match(/^(\d{3,4})$/);
+  if (m) {
+    const raw = m[1].padStart(4, "0");
+    const hh = raw.slice(0, 2);
+    const mm = raw.slice(2, 4);
+    if (!isValidTimeParts(hh, mm)) return "";
+    return `${hh}.${mm}`;
+  }
+
+  return "";
+}
+
+function pad2(v) {
+  return String(v).padStart(2, "0");
+}
+
+function isValidDateParts(dd, mm, yyyy) {
+  const d = Number(dd);
+  const m = Number(mm);
+  const y = Number(yyyy);
+  if (!Number.isInteger(d) || !Number.isInteger(m) || !Number.isInteger(y)) return false;
+  if (y < 1900 || y > 2100) return false;
+  if (m < 1 || m > 12) return false;
+  if (d < 1 || d > 31) return false;
+
+  // echte Kalenderprüfung
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+}
+
+function isValidTimeParts(hh, mm) {
+  const h = Number(hh);
+  const m = Number(mm);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return false;
+  if (h < 0 || h > 23) return false;
+  if (m < 0 || m > 59) return false;
+  return true;
+}
+
+/**
+ * Normalisiert foundAt.date und foundAt.time in einem LostItem-Objekt
+ * (ohne Mutation des Originals).
+ */
+function normalizeLostItemDates(item) {
+  if (!item) return item;
+
+  const dateNorm = normalizeDate(item?.foundAt?.date || "");
+  const timeNorm = normalizeTime(item?.foundAt?.time || "");
+
+  return {
+    ...item,
+    foundAt: {
+      ...(item.foundAt || {}),
+      date: dateNorm || (item?.foundAt?.date || ""),
+      time: timeNorm || (item?.foundAt?.time || ""),
+    },
+  };
 }
