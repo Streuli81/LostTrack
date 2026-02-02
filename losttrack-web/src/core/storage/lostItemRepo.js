@@ -17,11 +17,11 @@ const KEY_AUDIT   = `lostItems.audit.${STORAGE_VERSION}`;   // append-only Log
  * ------------------------------------------------- */
 
 export function listLostItems() {
-  return storage.getJson(KEY_RECORDS, []);
+  return normalizeAll(storage.getJson(KEY_RECORDS, []));
 }
 
 export function listDrafts() {
-  return storage.getJson(KEY_DRAFTS, []);
+  return normalizeAll(storage.getJson(KEY_DRAFTS, []));
 }
 
 export function listAuditLog() {
@@ -34,7 +34,8 @@ export function listAuditLog() {
 export function getLostItemById(id) {
   if (!id) return null;
   const records = storage.getJson(KEY_RECORDS, []);
-  return records.find((x) => x?.id === id) || null;
+  const found = records.find((x) => x?.id === id) || null;
+  return normalizeOne(found);
 }
 
 /**
@@ -68,29 +69,31 @@ export function searchLostItems(q = {}) {
     (b?.createdAt || "").localeCompare(a?.createdAt || "")
   );
 
-  return sorted.filter((r) => {
-    if (fundNo && !norm(r.fundNo).includes(fundNo)) return false;
+  return normalizeAll(
+    sorted.filter((r) => {
+      if (fundNo && !norm(r.fundNo).includes(fundNo)) return false;
 
-    if (finder) {
-      const fn = norm(r?.finder?.name);
-      const fp = norm(r?.finder?.phone);
-      const fe = norm(r?.finder?.email);
-      if (!(fn.includes(finder) || fp.includes(finder) || fe.includes(finder))) return false;
-    }
+      if (finder) {
+        const fn = norm(r?.finder?.name);
+        const fp = norm(r?.finder?.phone);
+        const fe = norm(r?.finder?.email);
+        if (!(fn.includes(finder) || fp.includes(finder) || fe.includes(finder))) return false;
+      }
 
-    if (item) {
-      const pk = norm(r?.item?.predefinedKey);
-      const ml = norm(r?.item?.manualLabel);
-      const ds = norm(r?.item?.description);
-      if (!(pk.includes(item) || ml.includes(item) || ds.includes(item))) return false;
-    }
+      if (item) {
+        const pk = norm(r?.item?.predefinedKey);
+        const ml = norm(r?.item?.manualLabel);
+        const ds = norm(r?.item?.description);
+        if (!(pk.includes(item) || ml.includes(item) || ds.includes(item))) return false;
+      }
 
-    if (location && !norm(r?.foundAt?.location).includes(location)) return false;
+      if (location && !norm(r?.foundAt?.location).includes(location)) return false;
 
-    if (!inDateRange(r?.foundAt?.date)) return false;
+      if (!inDateRange(r?.foundAt?.date)) return false;
 
-    return true;
-  });
+      return true;
+    })
+  );
 }
 
 /* -------------------------------------------------
@@ -109,11 +112,11 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
 
   const now = new Date().toISOString();
 
-  const updated = {
+  const updated = normalizeOne({
     ...current,
     status: String(newStatus).toUpperCase(),
     updatedAt: now,
-  };
+  });
 
   const records = storage.getJson(KEY_RECORDS, []);
   const nextRecords = upsertById(records, updated);
@@ -155,12 +158,18 @@ export function updateLostItem(input, { actor = null } = {}) {
 
   const now = new Date().toISOString();
 
-  const updated = {
+  // WICHTIG:
+  // - Fundnummer bleibt unverändert
+  // - investigationSteps bleibt erhalten, sofern das Formular es nicht mitliefert
+  const updated = normalizeOne({
     ...existing,
     ...value,
-    fundNo: existing.fundNo, // ❗ Fundnummer bleibt unverändert
+    fundNo: existing.fundNo,
+    investigationSteps: Array.isArray(value.investigationSteps)
+      ? value.investigationSteps
+      : existing.investigationSteps,
     updatedAt: now,
-  };
+  });
 
   const records = storage.getJson(KEY_RECORDS, []);
   const nextRecords = upsertById(records, updated);
@@ -185,17 +194,19 @@ export function updateLostItem(input, { actor = null } = {}) {
 export function saveDraft(input) {
   const { value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.DRAFT });
 
+  const draft = normalizeOne(value);
+
   const drafts = storage.getJson(KEY_DRAFTS, []);
-  const nextDrafts = upsertById(drafts, value);
+  const nextDrafts = upsertById(drafts, draft);
   storage.setJson(KEY_DRAFTS, nextDrafts);
 
   appendAudit({
     type: "DRAFT_SAVED",
-    fundNo: value.fundNo || null,
-    snapshot: slimSnapshot(value),
+    fundNo: draft.fundNo || null,
+    snapshot: slimSnapshot(draft),
   });
 
-  return { item: value, errors };
+  return { item: draft, errors };
 }
 
 /* -------------------------------------------------
@@ -210,21 +221,121 @@ export function commitLostItem(input) {
 
   if (!ok) return { ok: false, errors };
 
-  if (!value.id) value.id = cryptoId();
+  const record = normalizeOne({ ...value });
+
+  if (!record.id) record.id = cryptoId();
 
   const records = storage.getJson(KEY_RECORDS, []);
-  const nextRecords = upsertById(records, value);
+  const nextRecords = upsertById(records, record);
   storage.setJson(KEY_RECORDS, nextRecords);
 
-  removeDraftById(value.id);
+  removeDraftById(record.id);
 
   appendAudit({
     type: "ITEM_COMMITTED",
-    fundNo: value.fundNo || null,
-    snapshot: slimSnapshot(value),
+    fundNo: record.fundNo || null,
+    snapshot: slimSnapshot(record),
   });
 
-  return { ok: true, item: value };
+  return { ok: true, item: record };
+}
+
+/* -------------------------------------------------
+ * WRITE – ERMITTLUNGSSCHRITTE
+ * ------------------------------------------------- */
+
+/**
+ * Fügt einen Ermittlungsschritt zu einer bestehenden Fundsache hinzu.
+ * step: { at?: ISO-string, who: string, what: string }
+ */
+export function addInvestigationStep({ id, step, actor = null }) {
+  if (!id) return { ok: false, error: "Missing id" };
+
+  const current = getLostItemById(id);
+  if (!current) return { ok: false, error: "Not found" };
+
+  const who = (step?.who ?? "").toString().trim();
+  const what = (step?.what ?? "").toString().trim();
+  const at = step?.at ? toIsoOrNull(step.at) : new Date().toISOString();
+
+  if (!who) return { ok: false, error: "Feld 'Wer' ist leer." };
+  if (!what) return { ok: false, error: "Feld 'Was' ist leer." };
+  if (!at) return { ok: false, error: "Ungültiges Datum/Zeit." };
+
+  const newStep = {
+    id: cryptoId(),
+    at,
+    who,
+    what,
+  };
+
+  const now = new Date().toISOString();
+
+  const updated = normalizeOne({
+    ...current,
+    investigationSteps: [...(current.investigationSteps || []), newStep],
+    updatedAt: now,
+  });
+
+  const records = storage.getJson(KEY_RECORDS, []);
+  const nextRecords = upsertById(records, updated);
+  storage.setJson(KEY_RECORDS, nextRecords);
+
+  appendAudit({
+    type: "INVESTIGATION_STEP_ADDED",
+    fundNo: updated.fundNo || null,
+    snapshot: {
+      id: updated.id,
+      step: newStep,
+      actor,
+      at: now,
+    },
+  });
+
+  return { ok: true, item: updated, step: newStep };
+}
+
+/**
+ * Löscht einen Ermittlungsschritt (optional, aber praktisch).
+ */
+export function deleteInvestigationStep({ id, stepId, actor = null }) {
+  if (!id) return { ok: false, error: "Missing id" };
+  if (!stepId) return { ok: false, error: "Missing stepId" };
+
+  const current = getLostItemById(id);
+  if (!current) return { ok: false, error: "Not found" };
+
+  const before = current.investigationSteps || [];
+  const after = before.filter((s) => s?.id !== stepId);
+
+  if (after.length === before.length) {
+    return { ok: false, error: "Step not found" };
+  }
+
+  const now = new Date().toISOString();
+
+  const updated = normalizeOne({
+    ...current,
+    investigationSteps: after,
+    updatedAt: now,
+  });
+
+  const records = storage.getJson(KEY_RECORDS, []);
+  const nextRecords = upsertById(records, updated);
+  storage.setJson(KEY_RECORDS, nextRecords);
+
+  appendAudit({
+    type: "INVESTIGATION_STEP_DELETED",
+    fundNo: updated.fundNo || null,
+    snapshot: {
+      id: updated.id,
+      stepId,
+      actor,
+      at: now,
+    },
+  });
+
+  return { ok: true, item: updated };
 }
 
 /* -------------------------------------------------
@@ -275,9 +386,42 @@ function slimSnapshot(item) {
       manualLabel: item?.item?.manualLabel || "",
       description: item?.item?.description || "",
     },
+    investigationSteps: Array.isArray(item?.investigationSteps)
+      ? item.investigationSteps.map((s) => ({
+          id: s?.id,
+          at: s?.at,
+          who: s?.who,
+          what: s?.what,
+        }))
+      : [],
   };
 }
 
 function cryptoId() {
   return "id_" + Date.now().toString(16) + "_" + Math.random().toString(16).slice(2);
+}
+
+/**
+ * Migration/Schema-Guard:
+ * - stellt sicher, dass investigationSteps immer ein Array ist
+ */
+function normalizeOne(item) {
+  if (!item) return item;
+  const out = { ...item };
+  if (!Array.isArray(out.investigationSteps)) out.investigationSteps = [];
+  return out;
+}
+
+function normalizeAll(list) {
+  return (list || []).map((x) => normalizeOne(x));
+}
+
+function toIsoOrNull(value) {
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  } catch {
+    return null;
+  }
 }

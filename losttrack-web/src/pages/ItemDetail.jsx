@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { getLostItemById, changeLostItemStatus } from "../core/storage/lostItemRepo";
+import InvestigationSteps from "../components/InvestigationSteps";
 
 const STATUS = ["OPEN", "IN_PROGRESS", "CLOSED"];
 
@@ -25,9 +26,13 @@ export default function ItemDetail() {
   const label = item?.item?.manualLabel || item?.item?.predefinedKey || "(kein Gegenstand)";
   const status = (item.status || "OPEN").toUpperCase();
 
+  function refresh() {
+    setTick((x) => x + 1);
+  }
+
   function setStatus(newStatus) {
     const res = changeLostItemStatus({ id: item.id, newStatus });
-    if (res.ok) setTick((x) => x + 1);
+    if (res.ok) refresh();
     else alert(res.error || "Statuswechsel fehlgeschlagen");
   }
 
@@ -90,6 +95,15 @@ export default function ItemDetail() {
             Bearbeiten ist jetzt verfügbar. Quittung/Export folgt später.
           </div>
         </Card>
+
+        {/* ✅ NEU: Ermittlungsschritte (volle Breite) */}
+        <div style={{ gridColumn: "1 / -1" }}>
+          <InvestigationSteps
+            itemId={item.id}
+            steps={item.investigationSteps}
+            onChanged={refresh}
+          />
+        </div>
       </div>
     </section>
   );
