@@ -158,16 +158,19 @@ export function updateLostItem(input, { actor = null } = {}) {
 
   const now = new Date().toISOString();
 
-  // WICHTIG:
-  // - Fundnummer bleibt unverändert
-  // - investigationSteps bleibt erhalten, sofern das Formular es nicht mitliefert
   const updated = normalizeOne({
     ...existing,
     ...value,
-    fundNo: existing.fundNo,
+    fundNo: existing.fundNo, // ❗ Fundnummer bleibt unverändert
+
+    // darf nicht verloren gehen:
     investigationSteps: Array.isArray(value.investigationSteps)
       ? value.investigationSteps
       : existing.investigationSteps,
+
+    owner: value.owner ?? existing.owner,
+    collector: value.collector ?? existing.collector,
+
     updatedAt: now,
   });
 
@@ -296,7 +299,7 @@ export function addInvestigationStep({ id, step, actor = null }) {
 }
 
 /**
- * Löscht einen Ermittlungsschritt (optional, aber praktisch).
+ * Löscht einen Ermittlungsschritt.
  */
 export function deleteInvestigationStep({ id, stepId, actor = null }) {
   if (!id) return { ok: false, error: "Missing id" };
@@ -339,8 +342,109 @@ export function deleteInvestigationStep({ id, stepId, actor = null }) {
 }
 
 /* -------------------------------------------------
+ * WRITE – FINDER / OWNER / COLLECTOR (inline edit)
+ * + automatische Ermittlungsschritte
+ * ------------------------------------------------- */
+
+export function updateFinder({ id, finder, actor = null }) {
+  if (!id) return { ok: false, error: "Missing id" };
+
+  const current = getLostItemById(id);
+  if (!current) return { ok: false, error: "Not found" };
+
+  const clean = sanitizeFinder(finder);
+  const now = new Date().toISOString();
+
+  const updated = normalizeOne({
+    ...current,
+    finder: clean,
+    updatedAt: now,
+  });
+
+  persistRecord(updated);
+
+  appendAudit({
+    type: "FINDER_UPDATED",
+    fundNo: updated.fundNo || null,
+    snapshot: { id: updated.id, finder: updated.finder, actor, at: now },
+  });
+
+  // ✅ Auto-Ermittlungsschritt
+  appendAutoInvestigationStep(updated, actor, buildAutoText("Finder", clean));
+
+  return { ok: true, item: updated };
+}
+
+export function updateOwner({ id, owner, actor = null }) {
+  if (!id) return { ok: false, error: "Missing id" };
+
+  const current = getLostItemById(id);
+  if (!current) return { ok: false, error: "Not found" };
+
+  const clean = sanitizeParty(owner);
+  const now = new Date().toISOString();
+
+  const updated = normalizeOne({
+    ...current,
+    owner: clean,
+    updatedAt: now,
+  });
+
+  persistRecord(updated);
+
+  appendAudit({
+    type: "OWNER_UPDATED",
+    fundNo: updated.fundNo || null,
+    snapshot: { id: updated.id, owner: updated.owner, actor, at: now },
+  });
+
+  appendAutoInvestigationStep(updated, actor, buildAutoText("Eigentümer", clean));
+
+  return { ok: true, item: updated };
+}
+
+export function updateCollector({ id, collector, actor = null }) {
+  if (!id) return { ok: false, error: "Missing id" };
+
+  const current = getLostItemById(id);
+  if (!current) return { ok: false, error: "Not found" };
+
+  // collector kann bewusst null sein = entfernen
+  const clean = collector === null ? null : sanitizeParty(collector);
+  const now = new Date().toISOString();
+
+  const updated = normalizeOne({
+    ...current,
+    collector: clean,
+    updatedAt: now,
+  });
+
+  persistRecord(updated);
+
+  appendAudit({
+    type: "COLLECTOR_UPDATED",
+    fundNo: updated.fundNo || null,
+    snapshot: { id: updated.id, collector: updated.collector, actor, at: now },
+  });
+
+  if (clean) {
+    appendAutoInvestigationStep(updated, actor, buildAutoText("Abholer", clean));
+  } else {
+    appendAutoInvestigationStep(updated, actor, "Abholer entfernt.");
+  }
+
+  return { ok: true, item: updated };
+}
+
+/* -------------------------------------------------
  * INTERNAL HELPERS
  * ------------------------------------------------- */
+
+function persistRecord(updated) {
+  const records = storage.getJson(KEY_RECORDS, []);
+  const next = upsertById(records, updated);
+  storage.setJson(KEY_RECORDS, next);
+}
 
 function upsertById(list, item) {
   if (!item.id) item.id = cryptoId();
@@ -394,6 +498,8 @@ function slimSnapshot(item) {
           what: s?.what,
         }))
       : [],
+    owner: item?.owner || null,
+    collector: item?.collector || null,
   };
 }
 
@@ -404,11 +510,14 @@ function cryptoId() {
 /**
  * Migration/Schema-Guard:
  * - stellt sicher, dass investigationSteps immer ein Array ist
+ * - owner/collector existieren zumindest als null/obj (optional)
  */
 function normalizeOne(item) {
   if (!item) return item;
   const out = { ...item };
   if (!Array.isArray(out.investigationSteps)) out.investigationSteps = [];
+  if (!("owner" in out)) out.owner = null;
+  if (!("collector" in out)) out.collector = null;
   return out;
 }
 
@@ -424,4 +533,73 @@ function toIsoOrNull(value) {
   } catch {
     return null;
   }
+}
+
+/* ---------- sanitize helpers ---------- */
+
+function sanitizeParty(p) {
+  if (!p) return { name: "", address: "", phone: "", email: "" };
+  return {
+    name: (p.name ?? "").toString().trim(),
+    address: (p.address ?? "").toString().trim(),
+    phone: (p.phone ?? "").toString().trim(),
+    email: (p.email ?? "").toString().trim(),
+  };
+}
+
+function sanitizeFinder(f) {
+  const base = f || {};
+  return {
+    name: (base.name ?? "").toString().trim(),
+    address: (base.address ?? "").toString().trim(),
+    phone: (base.phone ?? "").toString().trim(),
+    email: (base.email ?? "").toString().trim(),
+    rewardRequested: !!base.rewardRequested,
+  };
+}
+
+/* ---------- auto investigation steps ---------- */
+
+function appendAutoInvestigationStep(item, actor, what) {
+  const who = (actor ?? "").toString().trim() || "System";
+  const step = { who, what };
+
+  // Wir nutzen die bestehende addInvestigationStep-Logik nicht direkt,
+  // weil die wiederum getLostItemById liest und nochmal speichert.
+  // Hier hängen wir den Step minimal-invasiv direkt an und speichern.
+  const now = new Date().toISOString();
+  const newStep = {
+    id: cryptoId(),
+    at: now,
+    who: step.who,
+    what: step.what,
+  };
+
+  const updated = normalizeOne({
+    ...item,
+    investigationSteps: [...(item.investigationSteps || []), newStep],
+    updatedAt: now,
+  });
+
+  persistRecord(updated);
+
+  appendAudit({
+    type: "INVESTIGATION_STEP_ADDED_AUTO",
+    fundNo: updated.fundNo || null,
+    snapshot: { id: updated.id, step: newStep, actor: who, at: now },
+  });
+}
+
+function buildAutoText(roleLabel, p) {
+  const name = (p?.name || "").trim();
+  const phone = (p?.phone || "").trim();
+  const email = (p?.email || "").trim();
+
+  const parts = [];
+  if (name) parts.push(`Name: ${name}`);
+  if (phone) parts.push(`Tel: ${phone}`);
+  if (email) parts.push(`E-Mail: ${email}`);
+
+  if (parts.length === 0) return `${roleLabel} erfasst/aktualisiert.`;
+  return `${roleLabel} erfasst/aktualisiert (${parts.join(", ")}).`;
 }

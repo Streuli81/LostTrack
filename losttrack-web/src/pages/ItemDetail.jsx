@@ -1,8 +1,16 @@
 // src/pages/ItemDetail.jsx
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { getLostItemById, changeLostItemStatus } from "../core/storage/lostItemRepo";
+import {
+  getLostItemById,
+  changeLostItemStatus,
+  updateFinder,
+  updateOwner,
+  updateCollector,
+} from "../core/storage/lostItemRepo";
+
 import InvestigationSteps from "../components/InvestigationSteps";
+import PartyCardEditor from "../components/PartyCardEditor";
 
 const STATUS = ["OPEN", "IN_PROGRESS", "CLOSED"];
 
@@ -36,6 +44,10 @@ export default function ItemDetail() {
     else alert(res.error || "Statuswechsel fehlgeschlagen");
   }
 
+  // Optional: bis Login kommt, kannst du hier einen fixen actor setzen.
+  // Später kommt das aus dem Login-Kontext.
+  const actor = null; // z.B. "3sim"
+
   return (
     <section style={{ maxWidth: 1100 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
@@ -54,7 +66,6 @@ export default function ItemDetail() {
             {status}
           </span>
 
-          {/* ✅ NEU */}
           <button type="button" onClick={() => nav(`/items/${item.id}/bearbeiten`)}>
             Bearbeiten
           </button>
@@ -63,47 +74,78 @@ export default function ItemDetail() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
-        <Card title="Sachbearbeiter">
-          <Row k="ID" v={item?.caseWorker?.id} />
-          <Row k="Name" v={item?.caseWorker?.name} />
-        </Card>
+      <div style={twoCol}>
+        {/* Linke Spalte */}
+        <div style={colStack}>
+          <Card title="Sachbearbeiter">
+            <Row k="ID" v={item?.caseWorker?.id} />
+            <Row k="Name" v={item?.caseWorker?.name} />
+          </Card>
 
-        <Card title="Finder">
-          <Row k="Name" v={item?.finder?.name} />
-          <Row k="Telefon" v={item?.finder?.phone} />
-          <Row k="E-Mail" v={item?.finder?.email} />
-          <Row k="Finderlohn" v={item?.finder?.rewardRequested ? "Ja" : "Nein"} />
-        </Card>
+          <Card title="Gegenstand">
+            <Row k="PredefinedKey" v={item?.item?.predefinedKey} />
+            <Row k="Manuell" v={item?.item?.manualLabel} />
+            <Row k="Beschreibung" v={item?.item?.description} />
+          </Card>
 
-        <Card title="Gegenstand">
-          <Row k="PredefinedKey" v={item?.item?.predefinedKey} />
-          <Row k="Manuell" v={item?.item?.manualLabel} />
-          <Row k="Beschreibung" v={item?.item?.description} />
-        </Card>
+          {/* ✅ Workflow jetzt links, unter Gegenstand */}
+          <Card title="Workflow">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {STATUS.map((s) => (
+                <button key={s} type="button" disabled={status === s} onClick={() => setStatus(s)}>
+                  Status → {s}
+                </button>
+              ))}
+            </div>
 
-        <Card title="Workflow">
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {STATUS.map((s) => (
-              <button key={s} type="button" disabled={status === s} onClick={() => setStatus(s)}>
-                Status → {s}
-              </button>
-            ))}
-          </div>
+            <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 13 }}>
+              Bearbeiten ist jetzt verfügbar. Quittung/Export folgt später.
+            </div>
+          </Card>
+        </div>
 
-          <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 13 }}>
-            Bearbeiten ist jetzt verfügbar. Quittung/Export folgt später.
-          </div>
-        </Card>
+        {/* Rechte Spalte */}
+        <div style={colStack}>
+          {/* ✅ Finder editierbar */}
+          <PartyCardEditor
+            title="Finder"
+            initialValue={item.finder}
+            showRewardRequested={true}
+            onSave={(finder) => {
+              const res = updateFinder({ id: item.id, finder, actor });
+              if (res?.ok) refresh();
+              return res;
+            }}
+          />
 
-        {/* ✅ NEU: Ermittlungsschritte (volle Breite) */}
-        <div style={{ gridColumn: "1 / -1" }}>
-          <InvestigationSteps
-            itemId={item.id}
-            steps={item.investigationSteps}
-            onChanged={refresh}
+          {/* ✅ Eigentümer editierbar */}
+          <PartyCardEditor
+            title="Eigentümer"
+            initialValue={item.owner}
+            onSave={(owner) => {
+              const res = updateOwner({ id: item.id, owner, actor });
+              if (res?.ok) refresh();
+              return res;
+            }}
+          />
+
+          {/* ✅ Abholer editierbar + entfernbar */}
+          <PartyCardEditor
+            title="Abholer"
+            initialValue={item.collector}
+            allowClear={true}
+            onSave={(collector) => {
+              const res = updateCollector({ id: item.id, collector, actor });
+              if (res?.ok) refresh();
+              return res;
+            }}
           />
         </div>
+      </div>
+
+      {/* Ermittlungsschritte (volle Breite) */}
+      <div style={{ marginTop: 12 }}>
+        <InvestigationSteps itemId={item.id} steps={item.investigationSteps} onChanged={refresh} />
       </div>
     </section>
   );
@@ -128,3 +170,16 @@ function Row({ k, v }) {
     </div>
   );
 }
+
+/* Layout styles */
+const twoCol = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: 12,
+  marginTop: 16,
+};
+
+const colStack = {
+  display: "grid",
+  gap: 12,
+};
