@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# lokale Start-/Hilfsskripte
+*.ps1
+*.cmd
+*.vbs
+
+# Build / Cache
+dist/
+.vite/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
