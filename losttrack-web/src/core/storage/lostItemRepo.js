@@ -38,7 +38,7 @@ export function getLostItemById(id) {
 }
 
 /**
- * Suche in Records (AND-Verknüpfung: alle gesetzten Filter müssen matchen)
+ * Suche in Records (AND-Verknüpfung)
  * q: { fundNo, finder, item, location, dateFrom, dateTo }
  */
 export function searchLostItems(q = {}) {
@@ -56,7 +56,6 @@ export function searchLostItems(q = {}) {
     if (!df && !dt) return true;
     if (!dateStr) return false;
 
-    // bei dir ist foundAt.date bereits "YYYY-MM-DD"
     const d = String(dateStr).slice(0, 10);
     if (df && d < df) return false;
     if (dt && d > dt) return false;
@@ -65,17 +64,13 @@ export function searchLostItems(q = {}) {
 
   const records = storage.getJson(KEY_RECORDS, []);
 
-  // optional: neueste zuerst (createdAt falls vorhanden)
-  const sorted = [...records].sort((a, b) => (b?.createdAt || "").localeCompare(a?.createdAt || ""));
+  const sorted = [...records].sort((a, b) =>
+    (b?.createdAt || "").localeCompare(a?.createdAt || "")
+  );
 
   return sorted.filter((r) => {
-    // Fundnummer
-    if (fundNo) {
-      const rFund = norm(r.fundNo);
-      if (!rFund.includes(fundNo)) return false;
-    }
+    if (fundNo && !norm(r.fundNo).includes(fundNo)) return false;
 
-    // Finder (Name / Phone / Email)
     if (finder) {
       const fn = norm(r?.finder?.name);
       const fp = norm(r?.finder?.phone);
@@ -83,7 +78,6 @@ export function searchLostItems(q = {}) {
       if (!(fn.includes(finder) || fp.includes(finder) || fe.includes(finder))) return false;
     }
 
-    // Gegenstand (predefinedKey / manualLabel / description)
     if (item) {
       const pk = norm(r?.item?.predefinedKey);
       const ml = norm(r?.item?.manualLabel);
@@ -91,22 +85,20 @@ export function searchLostItems(q = {}) {
       if (!(pk.includes(item) || ml.includes(item) || ds.includes(item))) return false;
     }
 
-    // Fundort
-    if (location) {
-      const loc = norm(r?.foundAt?.location);
-      if (!loc.includes(location)) return false;
-    }
+    if (location && !norm(r?.foundAt?.location).includes(location)) return false;
 
-    // Datum (foundAt.date)
     if (!inDateRange(r?.foundAt?.date)) return false;
 
     return true;
   });
 }
 
+/* -------------------------------------------------
+ * WRITE – STATUS
+ * ------------------------------------------------- */
+
 /**
  * Statuswechsel: Record updaten + Audit schreiben
- * (Revision-Logik kannst du später erweitern; fürs MVP reicht upsert + audit.)
  */
 export function changeLostItemStatus({ id, newStatus, actor = null }) {
   if (!id) return { ok: false, error: "Missing id" };
@@ -123,7 +115,6 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
     updatedAt: now,
   };
 
-  // speichern (upsert)
   const records = storage.getJson(KEY_RECORDS, []);
   const nextRecords = upsertById(records, updated);
   storage.setJson(KEY_RECORDS, nextRecords);
@@ -144,12 +135,52 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
 }
 
 /* -------------------------------------------------
+ * WRITE – UPDATE (EDIT-MODE)
+ * ------------------------------------------------- */
+
+/**
+ * Aktualisiert eine bestehende Fundsache (Bearbeiten).
+ * - keine neue Fundnummer
+ * - harte Validierung (COMMIT)
+ * - Audit-Eintrag
+ */
+export function updateLostItem(input, { actor = null } = {}) {
+  const { ok, value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.COMMIT });
+
+  if (!ok) return { ok: false, errors };
+  if (!value.id) return { ok: false, errors: { id: "Fehlende ID." } };
+
+  const existing = getLostItemById(value.id);
+  if (!existing) return { ok: false, errors: { id: "Datensatz nicht gefunden." } };
+
+  const now = new Date().toISOString();
+
+  const updated = {
+    ...existing,
+    ...value,
+    fundNo: existing.fundNo, // ❗ Fundnummer bleibt unverändert
+    updatedAt: now,
+  };
+
+  const records = storage.getJson(KEY_RECORDS, []);
+  const nextRecords = upsertById(records, updated);
+  storage.setJson(KEY_RECORDS, nextRecords);
+
+  appendAudit({
+    type: "ITEM_UPDATED",
+    fundNo: updated.fundNo || null,
+    snapshot: slimSnapshot(updated),
+  });
+
+  return { ok: true, item: updated };
+}
+
+/* -------------------------------------------------
  * WRITE – DRAFT
  * ------------------------------------------------- */
 
 /**
  * Speichert oder aktualisiert einen Entwurf (Vorschau).
- * Keine harten Pflichtfelder (Draft darf auch bei Fehlern gespeichert werden).
  */
 export function saveDraft(input) {
   const { value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.DRAFT });
@@ -168,30 +199,23 @@ export function saveDraft(input) {
 }
 
 /* -------------------------------------------------
- * WRITE – COMMIT (definitiv)
+ * WRITE – COMMIT (NEU)
  * ------------------------------------------------- */
 
 /**
- * Speichert eine Fundsache definitiv.
- * Pflichtfelder werden geprüft.
- * Draft (falls vorhanden) wird entfernt.
+ * Speichert eine Fundsache definitiv (Neu-Erfassung).
  */
 export function commitLostItem(input) {
   const { ok, value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.COMMIT });
 
-  if (!ok) {
-    return { ok: false, errors };
-  }
+  if (!ok) return { ok: false, errors };
 
-  // Commit muss eine stabile ID haben (für Draft-Entfernung, Audit, spätere Referenzen)
   if (!value.id) value.id = cryptoId();
 
-  // Upsert statt blind unshift: verhindert Doppel-Commits desselben Datensatzes
   const records = storage.getJson(KEY_RECORDS, []);
   const nextRecords = upsertById(records, value);
   storage.setJson(KEY_RECORDS, nextRecords);
 
-  // Draft entfernen (falls vorhanden)
   removeDraftById(value.id);
 
   appendAudit({
@@ -236,10 +260,6 @@ function appendAudit(event) {
   storage.setJson(KEY_AUDIT, log);
 }
 
-/**
- * Reduziertes Objekt fürs Audit (keine Fotos / grossen Datenmengen).
- * Bei Bedarf später erweitern (z.B. photosCount, investigationStepsCount).
- */
 function slimSnapshot(item) {
   return {
     id: item.id,
@@ -247,28 +267,17 @@ function slimSnapshot(item) {
     status: item.status,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
-
     caseWorker: item.caseWorker,
     foundAt: item.foundAt,
     finder: item.finder,
-
     item: {
       predefinedKey: item?.item?.predefinedKey || "",
       manualLabel: item?.item?.manualLabel || "",
-      category: item?.item?.category || "",
-      brand: item?.item?.brand || "",
-      type: item?.item?.type || "",
-      color: item?.item?.color || "",
-      serialNumber: item?.item?.serialNumber || "",
       description: item?.item?.description || "",
-      condition: item?.item?.condition || "",
     },
   };
 }
 
-/**
- * Einfache, stabile ID (ohne externe Abhängigkeiten).
- */
 function cryptoId() {
   return "id_" + Date.now().toString(16) + "_" + Math.random().toString(16).slice(2);
 }

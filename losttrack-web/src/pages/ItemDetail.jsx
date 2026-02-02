@@ -1,12 +1,13 @@
 // src/pages/ItemDetail.jsx
 import { useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { getLostItemById, changeLostItemStatus } from "../core/storage/lostItemRepo";
 
 const STATUS = ["OPEN", "IN_PROGRESS", "CLOSED"];
 
 export default function ItemDetail() {
   const { id } = useParams();
+  const nav = useNavigate();
   const [tick, setTick] = useState(0);
 
   const item = useMemo(() => getLostItemById(id), [id, tick]);
@@ -43,10 +44,16 @@ export default function ItemDetail() {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <span style={{ padding: "4px 10px", border: "1px solid #ccc", borderRadius: 999, fontSize: 12 }}>
             {status}
           </span>
+
+          {/* ✅ NEU */}
+          <button type="button" onClick={() => nav(`/items/${item.id}/bearbeiten`)}>
+            Bearbeiten
+          </button>
+
           <Link to="/suche">Zur Suche</Link>
         </div>
       </div>
@@ -80,7 +87,7 @@ export default function ItemDetail() {
           </div>
 
           <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 13 }}>
-            Bearbeiten / Quittung folgt als nächster Schritt.
+            Bearbeiten ist jetzt verfügbar. Quittung/Export folgt später.
           </div>
         </Card>
       </div>

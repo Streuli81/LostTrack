@@ -1,12 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { previewNextFundNumber, commitNextFundNumber } from "../utils/fundNumber";
+import { useNavigate, useParams } from "react-router-dom";
 
+import { previewNextFundNumber, commitNextFundNumber } from "../utils/fundNumber";
 import { createEmptyLostItem } from "../domain/lostItem";
-import { saveDraft, commitLostItem } from "../core/storage/lostItemRepo";
+
+import {
+  saveDraft,
+  commitLostItem,
+  getLostItemById,
+  updateLostItem,
+} from "../core/storage/lostItemRepo";
+
 import { validateLostItem, VALIDATION_MODE } from "../domain/lostItem.validators";
 
 export default function NewItem() {
-  // Fundnummern-Logik (Vorschau vs Commit)
+  const nav = useNavigate();
+  const { id } = useParams();
+
+  const isEditMode = !!id;
+
+  // Fundnummern-Logik (Vorschau vs Commit) – im Edit-Mode NICHT neu vergeben
   const [fundNumberPreview, setFundNumberPreview] = useState("");
   const [savedFundNumber, setSavedFundNumber] = useState("");
   const [isFundNumberCommitted, setIsFundNumberCommitted] = useState(false);
@@ -16,22 +29,48 @@ export default function NewItem() {
   const [errors, setErrors] = useState({});
 
   // Status UI
-  const [lastAction, setLastAction] = useState(""); // "draft" | "commit" | ""
+  const [lastAction, setLastAction] = useState(""); // "draft" | "commit" | "update" | ""
   const [lastMessage, setLastMessage] = useState("");
 
   useEffect(() => {
-    // Nur Vorschau (kein Hochzählen) → StrictMode-sicher
+    setLastMessage("");
+    setLastAction("");
+    setErrors({});
+
+    if (isEditMode) {
+      const existing = getLostItemById(id);
+
+      if (!existing) {
+        setData(createEmptyLostItem());
+        setLastMessage("Bearbeiten nicht möglich: Datensatz nicht gefunden.");
+        return;
+      }
+
+      setData(existing);
+
+      // Fundnummer im Edit-Modus immer als verbindlich anzeigen
+      setSavedFundNumber(existing.fundNo || "");
+      setIsFundNumberCommitted(true);
+      setFundNumberPreview(existing.fundNo || "");
+      return;
+    }
+
+    // Neu: nur Vorschau (StrictMode-sicher)
     const preview = previewNextFundNumber();
     setFundNumberPreview(preview);
 
-    // Fundnummer als Preview in den Form-State schreiben (read-only)
     setData((prev) => ({
       ...prev,
       fundNo: preview,
     }));
-  }, []);
 
-  const displayNumber = isFundNumberCommitted ? savedFundNumber : fundNumberPreview;
+    setSavedFundNumber("");
+    setIsFundNumberCommitted(false);
+  }, [isEditMode, id]);
+
+  const displayNumber = isEditMode
+    ? (data.fundNo || savedFundNumber || "")
+    : (isFundNumberCommitted ? savedFundNumber : fundNumberPreview);
 
   // Helper: Feld-Updates (einfach & stabil)
   function setField(path, value) {
@@ -44,39 +83,53 @@ export default function NewItem() {
     return res;
   }
 
-  // 1) Vorschau speichern → Draft (ohne Fundnummer-Counter zu committen)
   function handleSaveDraft() {
     setLastMessage("");
     setLastAction("");
 
-    // Draft validieren (weiche Checks)
     const { value, errors: vErrors } = showErrors(VALIDATION_MODE.DRAFT, data);
 
-    // Fundnummer bleibt Preview (kein commitNextFundNumber!)
     const result = saveDraft(value);
     setData(result.item);
     setErrors(result.errors || vErrors || {});
     setLastAction("draft");
-    setLastMessage("Entwurf (Vorschau) wurde gespeichert. Fundnummer ist noch nicht verbindlich.");
+    setLastMessage(isEditMode ? "Entwurf wurde gespeichert (Edit-Modus)." : "Entwurf (Vorschau) wurde gespeichert.");
   }
 
-  // 2) Commit → Fundnummer verbindlich + Record + Audit
-  function handleCommit() {
+  function handleCommitOrUpdate() {
     setLastMessage("");
     setLastAction("");
 
-    // Commit validieren (harte Pflichtfelder)
     const res = showErrors(VALIDATION_MODE.COMMIT, data);
     if (!res.ok) {
-      setLastAction("commit");
-      setLastMessage("Commit nicht möglich: Bitte Pflichtfelder korrigieren.");
+      setLastAction(isEditMode ? "update" : "commit");
+      setLastMessage("Speichern nicht möglich: Bitte Pflichtfelder korrigieren.");
       return;
     }
 
-    // Jetzt erst Fundnummer endgültig vergeben (Counter hochzählen)
+    if (isEditMode) {
+      // ✅ Update: keine neue Fundnummer
+      const upd = updateLostItem(res.value);
+      if (!upd.ok) {
+        setErrors(upd.errors || {});
+        setLastAction("update");
+        setLastMessage("Update fehlgeschlagen: Bitte Eingaben prüfen.");
+        return;
+      }
+
+      setData(upd.item);
+      setErrors({});
+      setLastAction("update");
+      setLastMessage("Fundsache wurde aktualisiert.");
+
+      // zurück zur Detailseite
+      nav(`/items/${upd.item.id}`);
+      return;
+    }
+
+    // ✅ Neu-Commit: Fundnummer verbindlich vergeben (Counter hochzählen)
     const committedFundNo = commitNextFundNumber();
 
-    // Fundnummer ins Objekt schreiben (read-only)
     const withFundNo = {
       ...res.value,
       fundNo: committedFundNo,
@@ -85,7 +138,6 @@ export default function NewItem() {
     const commitResult = commitLostItem(withFundNo);
 
     if (!commitResult.ok) {
-      // Sollte selten passieren (da bereits validiert), aber robust bleiben
       setErrors(commitResult.errors || {});
       setLastAction("commit");
       setLastMessage("Commit fehlgeschlagen: Bitte Eingaben prüfen.");
@@ -99,6 +151,9 @@ export default function NewItem() {
     setErrors({});
     setLastAction("commit");
     setLastMessage("Fundsache wurde definitiv erfasst (Record + Audit).");
+
+    // direkt zur Detailseite
+    nav(`/items/${commitResult.item.id}`);
   }
 
   // UI-Helper: Fehler anzeigen
@@ -106,7 +161,7 @@ export default function NewItem() {
 
   return (
     <section style={{ maxWidth: 1100 }}>
-      <h2 style={{ margin: "0 0 10px 0" }}>Neue Fundsache</h2>
+      <h2 style={{ margin: "0 0 10px 0" }}>{isEditMode ? "Fundsache bearbeiten" : "Neue Fundsache"}</h2>
 
       {/* Fundnummer */}
       <div style={{ marginBottom: 20 }}>
@@ -126,9 +181,11 @@ export default function NewItem() {
         />
 
         <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-          {isFundNumberCommitted
-            ? "Fundnummer ist verbindlich vergeben (Commit)."
-            : "Vorschau: Fundnummer wird erst beim Commit verbindlich vergeben."}
+          {isEditMode
+            ? "Edit-Modus: Fundnummer bleibt unverändert."
+            : (isFundNumberCommitted
+                ? "Fundnummer ist verbindlich vergeben (Commit)."
+                : "Vorschau: Fundnummer wird erst beim Commit verbindlich vergeben.")}
         </div>
       </div>
 
@@ -268,43 +325,23 @@ export default function NewItem() {
 
       {/* Buttons */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 18 }}>
-        <button
-          type="button"
-          onClick={handleSaveDraft}
-          style={btnStyle(false)}
-        >
-          Vorschau speichern (Draft)
+        <button type="button" onClick={handleSaveDraft} style={btnStyle(false)}>
+          Draft speichern
         </button>
 
-        <button
-          type="button"
-          onClick={handleCommit}
-          style={btnStyle(true)}
-        >
-          Commit (definitiv)
+        <button type="button" onClick={handleCommitOrUpdate} style={btnStyle(true)}>
+          {isEditMode ? "Update (speichern)" : "Commit (definitiv)"}
         </button>
 
-        {lastMessage && (
-          <span style={{ color: "var(--muted)" }}>
-            {lastMessage}
-          </span>
-        )}
+        {lastMessage && <span style={{ color: "var(--muted)" }}>{lastMessage}</span>}
       </div>
 
-      {/* Hinweis / Debug */}
+      {/* Hinweis */}
       <div style={{ marginTop: 14, color: "var(--muted)", fontSize: 13 }}>
-        Hinweis: Nach Draft/Commit sollten im Browser LocalStorage neue Keys erscheinen:
+        Hinweis: Records/Drafts/Audit liegen in LocalStorage unter:
         <br />
-        <code>losttrack:lostItems.drafts.v1</code>, <code>losttrack:lostItems.records.v1</code>,{" "}
-        <code>losttrack:lostItems.audit.v1</code>
+        <code>lostItems.drafts.v1</code>, <code>lostItems.records.v1</code>, <code>lostItems.audit.v1</code>
       </div>
-
-      {/* Minimaler Platzhalter */}
-      {!lastAction && (
-        <div style={{ marginTop: 14, color: "var(--muted)" }}>
-          Erfassungsformular (Basis): Funddaten, Finder, Gegenstand. Weitere Felder (Fotos, Steps) folgen.
-        </div>
-      )}
     </section>
   );
 }
@@ -335,19 +372,18 @@ function inputStyle(hasError) {
   };
 }
 
-function btnStyle(destructive) {
+function btnStyle(primary) {
   return {
     padding: "8px 12px",
     borderRadius: 6,
     border: "1px solid #ccc",
     cursor: "pointer",
-    background: destructive ? "#f7e8e8" : "#f3f3f3",
+    background: primary ? "#f0f0f0" : "#f3f3f3",
   };
 }
 
 /**
  * Setzt einen Wert in einem verschachtelten Objekt per "a.b.c"-Pfad.
- * (kein externes Package, robust genug für unser Formular)
  */
 function setByPath(obj, path, value) {
   const parts = path.split(".");
