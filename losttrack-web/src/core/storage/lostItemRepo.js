@@ -112,11 +112,15 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
 
   const now = new Date().toISOString();
 
+  const before = slimSnapshot(current);
+
   const updated = normalizeOne({
     ...current,
     status: String(newStatus).toUpperCase(),
     updatedAt: now,
   });
+
+  const after = slimSnapshot(updated);
 
   const records = storage.getJson(KEY_RECORDS, []);
   const nextRecords = upsertById(records, updated);
@@ -131,7 +135,10 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
       to: updated.status,
       actor,
       at: now,
+      before,
+      after,
     },
+    diff: diffSnapshots(before, after),
   });
 
   return { ok: true, item: updated };
@@ -145,7 +152,7 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
  * Aktualisiert eine bestehende Fundsache (Bearbeiten).
  * - keine neue Fundnummer
  * - harte Validierung (COMMIT)
- * - Audit-Eintrag
+ * - Audit-Eintrag mit before/after + diff
  */
 export function updateLostItem(input, { actor = null } = {}) {
   const { ok, value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.COMMIT });
@@ -157,6 +164,8 @@ export function updateLostItem(input, { actor = null } = {}) {
   if (!existing) return { ok: false, errors: { id: "Datensatz nicht gefunden." } };
 
   const now = new Date().toISOString();
+
+  const before = slimSnapshot(existing);
 
   const updated = normalizeOne({
     ...existing,
@@ -174,6 +183,8 @@ export function updateLostItem(input, { actor = null } = {}) {
     updatedAt: now,
   });
 
+  const after = slimSnapshot(updated);
+
   const records = storage.getJson(KEY_RECORDS, []);
   const nextRecords = upsertById(records, updated);
   storage.setJson(KEY_RECORDS, nextRecords);
@@ -181,7 +192,14 @@ export function updateLostItem(input, { actor = null } = {}) {
   appendAudit({
     type: "ITEM_UPDATED",
     fundNo: updated.fundNo || null,
-    snapshot: slimSnapshot(updated),
+    snapshot: {
+      id: updated.id,
+      actor,
+      at: now,
+      before,
+      after,
+    },
+    diff: diffSnapshots(before, after),
   });
 
   return { ok: true, item: updated };
@@ -193,20 +211,34 @@ export function updateLostItem(input, { actor = null } = {}) {
 
 /**
  * Speichert oder aktualisiert einen Entwurf (Vorschau).
+ * (optional actor via 2. Parameter, bleibt kompatibel)
  */
-export function saveDraft(input) {
+export function saveDraft(input, { actor = null } = {}) {
   const { value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.DRAFT });
 
   const draft = normalizeOne(value);
 
+  // Bei Draft ist "before" nicht zwingend, aber nützlich wenn existiert
   const drafts = storage.getJson(KEY_DRAFTS, []);
+  const existing = drafts.find((d) => d?.id === draft.id) || null;
+  const before = existing ? slimSnapshot(normalizeOne(existing)) : null;
+
   const nextDrafts = upsertById(drafts, draft);
   storage.setJson(KEY_DRAFTS, nextDrafts);
+
+  const after = slimSnapshot(draft);
 
   appendAudit({
     type: "DRAFT_SAVED",
     fundNo: draft.fundNo || null,
-    snapshot: slimSnapshot(draft),
+    snapshot: {
+      id: draft.id,
+      actor,
+      at: new Date().toISOString(),
+      before,
+      after,
+    },
+    diff: before ? diffSnapshots(before, after) : null,
   });
 
   return { item: draft, errors };
@@ -218,8 +250,9 @@ export function saveDraft(input) {
 
 /**
  * Speichert eine Fundsache definitiv (Neu-Erfassung).
+ * (optional actor via 2. Parameter, bleibt kompatibel)
  */
-export function commitLostItem(input) {
+export function commitLostItem(input, { actor = null } = {}) {
   const { ok, value, errors } = validateLostItem(input, { mode: VALIDATION_MODE.COMMIT });
 
   if (!ok) return { ok: false, errors };
@@ -234,10 +267,18 @@ export function commitLostItem(input) {
 
   removeDraftById(record.id);
 
+  const after = slimSnapshot(record);
+
   appendAudit({
     type: "ITEM_COMMITTED",
     fundNo: record.fundNo || null,
-    snapshot: slimSnapshot(record),
+    snapshot: {
+      id: record.id,
+      actor,
+      at: new Date().toISOString(),
+      after,
+    },
+    diff: null,
   });
 
   return { ok: true, item: record };
@@ -274,11 +315,15 @@ export function addInvestigationStep({ id, step, actor = null }) {
 
   const now = new Date().toISOString();
 
+  const before = slimSnapshot(current);
+
   const updated = normalizeOne({
     ...current,
     investigationSteps: [...(current.investigationSteps || []), newStep],
     updatedAt: now,
   });
+
+  const after = slimSnapshot(updated);
 
   const records = storage.getJson(KEY_RECORDS, []);
   const nextRecords = upsertById(records, updated);
@@ -289,10 +334,13 @@ export function addInvestigationStep({ id, step, actor = null }) {
     fundNo: updated.fundNo || null,
     snapshot: {
       id: updated.id,
-      step: newStep,
+      step: newStep, // ✅ enthält what/who/at
       actor,
       at: now,
+      before,
+      after,
     },
+    diff: diffSnapshots(before, after),
   });
 
   return { ok: true, item: updated, step: newStep };
@@ -308,20 +356,26 @@ export function deleteInvestigationStep({ id, stepId, actor = null }) {
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
 
-  const before = current.investigationSteps || [];
-  const after = before.filter((s) => s?.id !== stepId);
+  const beforeSteps = current.investigationSteps || [];
+  const stepDeleted = beforeSteps.find((s) => s?.id === stepId) || null;
 
-  if (after.length === before.length) {
+  const afterSteps = beforeSteps.filter((s) => s?.id !== stepId);
+
+  if (afterSteps.length === beforeSteps.length) {
     return { ok: false, error: "Step not found" };
   }
 
   const now = new Date().toISOString();
 
+  const before = slimSnapshot(current);
+
   const updated = normalizeOne({
     ...current,
-    investigationSteps: after,
+    investigationSteps: afterSteps,
     updatedAt: now,
   });
+
+  const after = slimSnapshot(updated);
 
   const records = storage.getJson(KEY_RECORDS, []);
   const nextRecords = upsertById(records, updated);
@@ -333,9 +387,13 @@ export function deleteInvestigationStep({ id, stepId, actor = null }) {
     snapshot: {
       id: updated.id,
       stepId,
+      step: stepDeleted, // ✅ optional: damit UI "was gelöscht" anzeigen kann
       actor,
       at: now,
+      before,
+      after,
     },
+    diff: diffSnapshots(before, after),
   });
 
   return { ok: true, item: updated };
@@ -352,8 +410,11 @@ export function updateFinder({ id, finder, actor = null }) {
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
 
-  const clean = sanitizeFinder(finder);
   const now = new Date().toISOString();
+
+  const before = slimSnapshot(current);
+
+  const clean = sanitizeFinder(finder);
 
   const updated = normalizeOne({
     ...current,
@@ -361,15 +422,25 @@ export function updateFinder({ id, finder, actor = null }) {
     updatedAt: now,
   });
 
+  const after = slimSnapshot(updated);
+
   persistRecord(updated);
 
   appendAudit({
     type: "FINDER_UPDATED",
     fundNo: updated.fundNo || null,
-    snapshot: { id: updated.id, finder: updated.finder, actor, at: now },
+    snapshot: {
+      id: updated.id,
+      finder: updated.finder,
+      actor,
+      at: now,
+      before,
+      after,
+    },
+    diff: diffSnapshots(before, after),
   });
 
-  // ✅ Auto-Ermittlungsschritt
+  // ✅ Auto-Ermittlungsschritt: enthält "what" bereits
   appendAutoInvestigationStep(updated, actor, buildAutoText("Finder", clean));
 
   return { ok: true, item: updated };
@@ -381,8 +452,11 @@ export function updateOwner({ id, owner, actor = null }) {
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
 
-  const clean = sanitizeParty(owner);
   const now = new Date().toISOString();
+
+  const before = slimSnapshot(current);
+
+  const clean = sanitizeParty(owner);
 
   const updated = normalizeOne({
     ...current,
@@ -390,12 +464,22 @@ export function updateOwner({ id, owner, actor = null }) {
     updatedAt: now,
   });
 
+  const after = slimSnapshot(updated);
+
   persistRecord(updated);
 
   appendAudit({
     type: "OWNER_UPDATED",
     fundNo: updated.fundNo || null,
-    snapshot: { id: updated.id, owner: updated.owner, actor, at: now },
+    snapshot: {
+      id: updated.id,
+      owner: updated.owner,
+      actor,
+      at: now,
+      before,
+      after,
+    },
+    diff: diffSnapshots(before, after),
   });
 
   appendAutoInvestigationStep(updated, actor, buildAutoText("Eigentümer", clean));
@@ -409,9 +493,12 @@ export function updateCollector({ id, collector, actor = null }) {
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
 
+  const now = new Date().toISOString();
+
+  const before = slimSnapshot(current);
+
   // collector kann bewusst null sein = entfernen
   const clean = collector === null ? null : sanitizeParty(collector);
-  const now = new Date().toISOString();
 
   const updated = normalizeOne({
     ...current,
@@ -419,12 +506,22 @@ export function updateCollector({ id, collector, actor = null }) {
     updatedAt: now,
   });
 
+  const after = slimSnapshot(updated);
+
   persistRecord(updated);
 
   appendAudit({
     type: "COLLECTOR_UPDATED",
     fundNo: updated.fundNo || null,
-    snapshot: { id: updated.id, collector: updated.collector, actor, at: now },
+    snapshot: {
+      id: updated.id,
+      collector: updated.collector,
+      actor,
+      at: now,
+      before,
+      after,
+    },
+    diff: diffSnapshots(before, after),
   });
 
   if (clean) {
@@ -465,6 +562,10 @@ function removeDraftById(id) {
   storage.setJson(KEY_DRAFTS, nextDrafts);
 }
 
+/**
+ * Append-only Audit
+ * Optional: event.diff = [{ path, from, to }]
+ */
 function appendAudit(event) {
   const log = storage.getJson(KEY_AUDIT, []);
   log.push({
@@ -475,6 +576,10 @@ function appendAudit(event) {
   storage.setJson(KEY_AUDIT, log);
 }
 
+/**
+ * Slim snapshot für Audit.
+ * Wichtig: stabil und UI-freundlich.
+ */
 function slimSnapshot(item) {
   return {
     id: item.id,
@@ -501,6 +606,89 @@ function slimSnapshot(item) {
     owner: item?.owner || null,
     collector: item?.collector || null,
   };
+}
+
+/**
+ * Diff zweier slimSnapshots.
+ * Gibt eine Liste mit geänderten Pfaden zurück:
+ * [{ path: "finder.phone", from: "...", to: "..." }, ...]
+ *
+ * - behandelt Objekte/Arrays rekursiv
+ * - Arrays: vergleicht length + einzelne Einträge (bei investigationSteps werden
+ *   in der Regel neue IDs hinzugefügt -> es wird sichtbar)
+ */
+function diffSnapshots(before, after) {
+  if (!before || !after) return null;
+
+  const changes = [];
+
+  const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
+
+  const eq = (a, b) => {
+    if (a === b) return true;
+    // simple NaN handling
+    if (typeof a === "number" && typeof b === "number" && Number.isNaN(a) && Number.isNaN(b)) return true;
+    return false;
+  };
+
+  const walk = (a, b, path) => {
+    // primitives / null
+    const aIsObj = isObj(a);
+    const bIsObj = isObj(b);
+
+    const aIsArr = Array.isArray(a);
+    const bIsArr = Array.isArray(b);
+
+    if (!aIsObj && !bIsObj && !aIsArr && !bIsArr) {
+      if (!eq(a, b)) changes.push({ path, from: a ?? null, to: b ?? null });
+      return;
+    }
+
+    // arrays
+    if (aIsArr || bIsArr) {
+      const aa = aIsArr ? a : [];
+      const bb = bIsArr ? b : [];
+      if (aa.length !== bb.length) {
+        changes.push({ path: `${path}.length`, from: aa.length, to: bb.length });
+      }
+
+      const max = Math.max(aa.length, bb.length);
+      for (let i = 0; i < max; i++) {
+        const ai = aa[i];
+        const bi = bb[i];
+        // bei Arrays von Objekten vergleichen wir grob via JSON
+        const p = `${path}[${i}]`;
+        if (isObj(ai) || isObj(bi) || Array.isArray(ai) || Array.isArray(bi)) {
+          const aj = ai === undefined ? null : ai;
+          const bj = bi === undefined ? null : bi;
+          const as = safeJson(aj);
+          const bs = safeJson(bj);
+          if (as !== bs) changes.push({ path: p, from: aj, to: bj });
+        } else {
+          if (!eq(ai, bi)) changes.push({ path: p, from: ai ?? null, to: bi ?? null });
+        }
+      }
+      return;
+    }
+
+    // objects
+    const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+    for (const k of keys) {
+      const nextPath = path ? `${path}.${k}` : k;
+      walk(a ? a[k] : undefined, b ? b[k] : undefined, nextPath);
+    }
+  };
+
+  walk(before, after, "");
+  return changes.length ? changes : null;
+}
+
+function safeJson(v) {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
 }
 
 function cryptoId() {
@@ -575,18 +763,31 @@ function appendAutoInvestigationStep(item, actor, what) {
     what: step.what,
   };
 
+  // Before/After + Diff für den Auto-Step
+  const before = slimSnapshot(item);
+
   const updated = normalizeOne({
     ...item,
     investigationSteps: [...(item.investigationSteps || []), newStep],
     updatedAt: now,
   });
 
+  const after = slimSnapshot(updated);
+
   persistRecord(updated);
 
   appendAudit({
     type: "INVESTIGATION_STEP_ADDED_AUTO",
     fundNo: updated.fundNo || null,
-    snapshot: { id: updated.id, step: newStep, actor: who, at: now },
+    snapshot: {
+      id: updated.id,
+      step: newStep,     // ✅ enthält what/who/at
+      actor: who,        // ✅ explizit
+      at: now,
+      before,
+      after,
+    },
+    diff: diffSnapshots(before, after),
   });
 }
 
