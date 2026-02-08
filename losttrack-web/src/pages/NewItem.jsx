@@ -269,29 +269,79 @@ export default function NewItem() {
       {/* Finder */}
       <h3 style={{ marginTop: 18, marginBottom: 8 }}>Finder</h3>
 
-      <Field label="Name" error={err("finder.name")}>
-        <input
-          type="text"
-          value={data.finder.name}
-          onChange={(e) => setField("finder.name", e.target.value)}
-          style={inputStyle(!!err("finder.name"))}
-          placeholder="Name Finder"
-          autoComplete="off"
-          name="finder_name"
-        />
-      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Vorname" error={err("finder.firstName")}>
+          <input
+            type="text"
+            value={data.finder.firstName}
+            onChange={(e) => setField("finder.firstName", e.target.value)}
+            style={inputStyle(!!err("finder.firstName"))}
+            placeholder="Vorname Finder"
+            autoComplete="off"
+            name="finder_firstName"
+          />
+        </Field>
 
-      <Field label="Adresse" error={err("finder.address")}>
-        <input
-          autoComplete="off"
-          name="finder_address"
-          type="text"
-          value={data.finder.address}
-          onChange={(e) => setField("finder.address", e.target.value)}
-          style={inputStyle(!!err("finder.address"))}
-          placeholder="Adresse Finder"
-        />
-      </Field>
+        <Field label="Name" error={err("finder.lastName")}>
+          <input
+            type="text"
+            value={data.finder.lastName}
+            onChange={(e) => setField("finder.lastName", e.target.value)}
+            style={inputStyle(!!err("finder.lastName"))}
+            placeholder="Name Finder"
+            autoComplete="off"
+            name="finder_lastName"
+          />
+        </Field>
+
+        <Field label="Strasse" error={err("finder.street")}>
+          <input
+            type="text"
+            value={data.finder.street}
+            onChange={(e) => setField("finder.street", e.target.value)}
+            style={inputStyle(!!err("finder.street"))}
+            placeholder="Strasse"
+            autoComplete="off"
+            name="finder_street"
+          />
+        </Field>
+
+        <Field label="Nr." error={err("finder.streetNo")}>
+          <input
+            type="text"
+            value={data.finder.streetNo}
+            onChange={(e) => setField("finder.streetNo", e.target.value)}
+            style={inputStyle(!!err("finder.streetNo"))}
+            placeholder="Nr."
+            autoComplete="off"
+            name="finder_streetNo"
+          />
+        </Field>
+
+        <Field label="PLZ" error={err("finder.zip")}>
+          <input
+            type="text"
+            value={data.finder.zip}
+            onChange={(e) => setField("finder.zip", e.target.value)}
+            style={inputStyle(!!err("finder.zip"))}
+            placeholder="PLZ"
+            autoComplete="off"
+            name="finder_zip"
+          />
+        </Field>
+
+        <Field label="Ort" error={err("finder.city")}>
+          <input
+            type="text"
+            value={data.finder.city}
+            onChange={(e) => setField("finder.city", e.target.value)}
+            style={inputStyle(!!err("finder.city"))}
+            placeholder="Ort"
+            autoComplete="off"
+            name="finder_city"
+          />
+        </Field>
+      </div>
 
       <Field label="Telefon" error={err("finder.phone")}>
         <input

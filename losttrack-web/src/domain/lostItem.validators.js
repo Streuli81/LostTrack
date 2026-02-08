@@ -90,14 +90,18 @@ export function validateLostItem(input, { mode = VALIDATION_MODE.DRAFT } = {}) {
       setErr("item.manualLabel", "Gegenstand auswählen oder manuell erfassen.");
     }
 
-    // Finder: mindestens Name ODER Telefon ODER E-Mail
-    const fnName = value?.finder?.name || "";
+    // ✅ Finder: mindestens Vorname ODER Nachname ODER Telefon ODER E-Mail
+    const fnFirst = value?.finder?.firstName || "";
+    const fnLast = value?.finder?.lastName || "";
     const fnPhone = value?.finder?.phone || "";
     const fnEmail = value?.finder?.email || "";
-    if (!hasAny(fnName, fnPhone, fnEmail)) {
-      setErr("finder.name", "Finder: Name oder Telefon oder E-Mail ist erforderlich.");
-      setErr("finder.phone", "Finder: Name oder Telefon oder E-Mail ist erforderlich.");
-      setErr("finder.email", "Finder: Name oder Telefon oder E-Mail ist erforderlich.");
+
+    if (!hasAny(fnFirst, fnLast, fnPhone, fnEmail)) {
+      const msg = "Finder: Name oder Telefon oder E-Mail ist erforderlich.";
+      setErr("finder.firstName", msg);
+      setErr("finder.lastName", msg);
+      setErr("finder.phone", msg);
+      setErr("finder.email", msg);
     }
   }
 
@@ -224,7 +228,6 @@ function normalizeDateInput(v) {
 
   return "";
 }
-
 
 /**
  * Akzeptiert:

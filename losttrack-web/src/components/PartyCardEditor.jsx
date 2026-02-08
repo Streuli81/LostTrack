@@ -18,13 +18,55 @@ export default function PartyCardEditor({
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    setValue({
-      name: initialValue?.name || "",
-      address: initialValue?.address || "",
-      phone: initialValue?.phone || "",
-      email: initialValue?.email || "",
-      ...(showRewardRequested ? { rewardRequested: !!initialValue?.rewardRequested } : {}),
-    });
+    const init = initialValue || {};
+
+    // --- Neues Format bevorzugen
+    const hasNew =
+      init &&
+      (init.lastName ||
+        init.firstName ||
+        init.zip ||
+        init.city ||
+        init.street ||
+        init.streetNo);
+
+    let next = {
+      lastName: init?.lastName || "",
+      firstName: init?.firstName || "",
+      zip: init?.zip || "",
+      city: init?.city || "",
+      street: init?.street || "",
+      streetNo: init?.streetNo || "",
+      phone: init?.phone || "",
+      email: init?.email || "",
+      ...(showRewardRequested ? { rewardRequested: !!init?.rewardRequested } : {}),
+    };
+
+    // --- Legacy best effort: name/address aufsplitten, wenn neue Felder fehlen
+    if (!hasNew) {
+      const legacyName = (init?.name || "").toString().trim();
+      const legacyAddress = (init?.address || "").toString().trim();
+
+      if (legacyName && !next.firstName && !next.lastName) {
+        const parts = legacyName.split(" ").filter(Boolean);
+        if (parts.length === 1) {
+          next.lastName = parts[0];
+        } else if (parts.length > 1) {
+          next.lastName = parts.pop();
+          next.firstName = parts.join(" ");
+        }
+      }
+
+      if (legacyAddress && !next.street && !next.zip && !next.city) {
+        const parsed = parseLegacyAddress(legacyAddress);
+        next.street = parsed.street;
+        next.streetNo = parsed.streetNo;
+        next.zip = parsed.zip;
+        next.city = parsed.city;
+      }
+    }
+
+    setValue(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title, JSON.stringify(initialValue || {})]);
 
@@ -76,17 +118,44 @@ export default function PartyCardEditor({
 
       <div style={grid2}>
         <Field
-          label="Name"
-          value={value.name}
-          onChange={(v) => setValue({ ...value, name: v })}
+          label="Vorname"
+          value={value.firstName}
+          onChange={(v) => setValue({ ...value, firstName: v })}
           disabled={busy}
         />
         <Field
-          label="Adresse"
-          value={value.address}
-          onChange={(v) => setValue({ ...value, address: v })}
+          label="Name"
+          value={value.lastName}
+          onChange={(v) => setValue({ ...value, lastName: v })}
           disabled={busy}
         />
+
+        <Field
+          label="Strasse"
+          value={value.street}
+          onChange={(v) => setValue({ ...value, street: v })}
+          disabled={busy}
+        />
+        <Field
+          label="Nr."
+          value={value.streetNo}
+          onChange={(v) => setValue({ ...value, streetNo: v })}
+          disabled={busy}
+        />
+
+        <Field
+          label="PLZ"
+          value={value.zip}
+          onChange={(v) => setValue({ ...value, zip: v })}
+          disabled={busy}
+        />
+        <Field
+          label="Ort"
+          value={value.city}
+          onChange={(v) => setValue({ ...value, city: v })}
+          disabled={busy}
+        />
+
         <Field
           label="Telefon"
           value={value.phone}
@@ -191,10 +260,51 @@ const divider = {
 
 function empty(showRewardRequested) {
   return {
-    name: "",
-    address: "",
+    lastName: "",
+    firstName: "",
+    zip: "",
+    city: "",
+    street: "",
+    streetNo: "",
     phone: "",
     email: "",
     ...(showRewardRequested ? { rewardRequested: false } : {}),
   };
+}
+
+/**
+ * Best-effort: alte address-Strings grob in Felder zerlegen.
+ * Erwartete Muster (CH-typisch):
+ * - "Musterstrasse 12, 8000 Zürich"
+ * - "Musterstrasse 12 8000 Zürich"
+ * - "8000 Zürich, Musterstrasse 12"
+ */
+function parseLegacyAddress(address) {
+  const a = String(address || "").trim();
+  if (!a) return { street: "", streetNo: "", zip: "", city: "" };
+
+  const compact = a.replace(/\s+/g, " ").trim();
+
+  // Try: "... , 8000 City" oder "... 8000 City"
+  let m = compact.match(/^(.*?)[,\s]+(\d{4,5})\s+(.+)$/);
+  if (m) {
+    const left = String(m[1] || "").trim();
+    const zip = String(m[2] || "").trim();
+    const city = String(m[3] || "").trim();
+
+    let street = left;
+    let streetNo = "";
+
+    // split street + number: "Musterstrasse 12a"
+    const m2 = left.match(/^(.+?)\s+(\d+\w*)$/);
+    if (m2) {
+      street = String(m2[1] || "").trim();
+      streetNo = String(m2[2] || "").trim();
+    }
+
+    return { street, streetNo, zip, city };
+  }
+
+  // Fallback: alles als street
+  return { street: compact, streetNo: "", zip: "", city: "" };
 }

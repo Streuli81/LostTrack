@@ -5,6 +5,47 @@
  * Hinweis: bewusst ohne UI-/Storage-Abhängigkeiten.
  */
 
+function safeTrim(v) {
+  return (v || "").toString().trim();
+}
+
+/**
+ * Best-effort: alte address-Strings grob in Felder zerlegen.
+ * Erwartete Muster (CH-typisch):
+ * - "Musterstrasse 12, 8000 Zürich"
+ * - "Musterstrasse 12 8000 Zürich"
+ * - "8000 Zürich, Musterstrasse 12"
+ */
+function parseLegacyAddress(address) {
+  const a = safeTrim(address);
+  if (!a) return { street: "", streetNo: "", zip: "", city: "" };
+
+  const compact = a.replace(/\s+/g, " ").trim();
+
+  // Try: "... , 8000 City" oder "... 8000 City"
+  let m = compact.match(/^(.*?)[,\s]+(\d{4,5})\s+(.+)$/);
+  if (m) {
+    const left = safeTrim(m[1]);
+    const zip = safeTrim(m[2]);
+    const city = safeTrim(m[3]);
+
+    let street = left;
+    let streetNo = "";
+
+    // split street + number: "Musterstrasse 12a"
+    const m2 = left.match(/^(.+?)\s+(\d+\w*)$/);
+    if (m2) {
+      street = safeTrim(m2[1]);
+      streetNo = safeTrim(m2[2]);
+    }
+
+    return { street, streetNo, zip, city };
+  }
+
+  // Fallback: alles als street
+  return { street: compact, streetNo: "", zip: "", city: "" };
+}
+
 export function createEmptyLostItem() {
   const nowIso = new Date().toISOString();
 
@@ -25,9 +66,14 @@ export function createEmptyLostItem() {
       location: "",         // Freitext
     },
 
+    // ✅ Detaillierte Personenerfassung (statt name/address)
     finder: {
-      name: "",
-      address: "",
+      lastName: "",
+      firstName: "",
+      zip: "",
+      city: "",
+      street: "",
+      streetNo: "",
       phone: "",
       email: "",
       rewardRequested: false,
@@ -63,30 +109,78 @@ export function normalizeLostItem(input) {
   if (!item.createdAt) item.createdAt = nowIso;
   item.updatedAt = nowIso;
 
+  // --- Sicherstellen, dass Unterobjekte existieren (robust, ohne Logikänderung)
+  item.caseWorker = item.caseWorker || { id: "", name: "" };
+  item.foundAt = item.foundAt || { date: "", time: "", location: "" };
+  item.finder = item.finder || {};
+  item.item = item.item || {
+    predefinedKey: "",
+    manualLabel: "",
+    category: "",
+    brand: "",
+    type: "",
+    color: "",
+    serialNumber: "",
+    description: "",
+    condition: "",
+  };
+
   // trim strings
-  item.caseWorker.id = (item.caseWorker.id || "").trim();
-  item.caseWorker.name = (item.caseWorker.name || "").trim();
+  item.caseWorker.id = safeTrim(item.caseWorker.id);
+  item.caseWorker.name = safeTrim(item.caseWorker.name);
 
-  item.foundAt.date = (item.foundAt.date || "").trim();
-  item.foundAt.time = (item.foundAt.time || "").trim();
-  item.foundAt.location = (item.foundAt.location || "").trim();
+  item.foundAt.date = safeTrim(item.foundAt.date);
+  item.foundAt.time = safeTrim(item.foundAt.time);
+  item.foundAt.location = safeTrim(item.foundAt.location);
 
-  item.finder.name = (item.finder.name || "").trim();
-  item.finder.address = (item.finder.address || "").trim();
-  item.finder.phone = (item.finder.phone || "").trim();
-  item.finder.email = (item.finder.email || "").trim();
+  // ✅ Backward-Compatibility: falls alte Felder existieren
+  // (z.B. finder.name, finder.address aus bestehenden Datensätzen)
+  if (typeof item.finder.name === "string" && !item.finder.lastName && !item.finder.firstName) {
+    const full = safeTrim(item.finder.name);
+    // best effort: letzter Teil = Nachname
+    const parts = full.split(" ").filter(Boolean);
+    if (parts.length === 1) {
+      item.finder.lastName = parts[0];
+      item.finder.firstName = "";
+    } else if (parts.length > 1) {
+      item.finder.lastName = parts.pop();
+      item.finder.firstName = parts.join(" ");
+    }
+  }
 
-  item.item.predefinedKey = (item.item.predefinedKey || "").trim();
-  item.item.manualLabel = (item.item.manualLabel || "").trim();
-  item.item.category = (item.item.category || "").trim();
-  item.item.brand = (item.item.brand || "").trim();
-  item.item.type = (item.item.type || "").trim();
-  item.item.color = (item.item.color || "").trim();
-  item.item.serialNumber = (item.item.serialNumber || "").trim();
-  item.item.description = (item.item.description || "").trim();
-  item.item.condition = (item.item.condition || "").trim();
+  if (typeof item.finder.address === "string") {
+    const parsed = parseLegacyAddress(item.finder.address);
+    // nur füllen, wenn die neuen Felder leer sind
+    if (!item.finder.street) item.finder.street = parsed.street;
+    if (!item.finder.streetNo) item.finder.streetNo = parsed.streetNo;
+    if (!item.finder.zip) item.finder.zip = parsed.zip;
+    if (!item.finder.city) item.finder.city = parsed.city;
+  }
 
-  item.notes = (item.notes || "").trim();
+  // ✅ Neue Finder-Felder trimmen
+  item.finder.lastName = safeTrim(item.finder.lastName);
+  item.finder.firstName = safeTrim(item.finder.firstName);
+  item.finder.zip = safeTrim(item.finder.zip);
+  item.finder.city = safeTrim(item.finder.city);
+  item.finder.street = safeTrim(item.finder.street);
+  item.finder.streetNo = safeTrim(item.finder.streetNo);
+  item.finder.phone = safeTrim(item.finder.phone);
+  item.finder.email = safeTrim(item.finder.email);
+
+  // Legacy-Felder optional entfernen? -> NEIN, wir lassen sie unangetastet,
+  // damit wirklich "alles andere bleibt wie es ist".
+
+  item.item.predefinedKey = safeTrim(item.item.predefinedKey);
+  item.item.manualLabel = safeTrim(item.item.manualLabel);
+  item.item.category = safeTrim(item.item.category);
+  item.item.brand = safeTrim(item.item.brand);
+  item.item.type = safeTrim(item.item.type);
+  item.item.color = safeTrim(item.item.color);
+  item.item.serialNumber = safeTrim(item.item.serialNumber);
+  item.item.description = safeTrim(item.item.description);
+  item.item.condition = safeTrim(item.item.condition);
+
+  item.notes = safeTrim(item.notes);
 
   // Status normalisieren
   const allowed = new Set(["OPEN", "RETURNED", "DISPOSED", "TRANSFERRED"]);
