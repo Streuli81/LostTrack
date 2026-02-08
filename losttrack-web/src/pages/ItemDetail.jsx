@@ -544,6 +544,13 @@ export default function ItemDetail() {
 
   const ownerAmount = toNumberOrNull(ownerRewardAmount);
 
+  // ✅ NEU: Wenn Finderlohn NICHT gewünscht -> Owner-Betrag leeren (kein "hängender" Wert)
+  useEffect(() => {
+    if (!wantsReward) {
+      setOwnerRewardAmount("");
+    }
+  }, [wantsReward]);
+
   return (
     <section style={{ maxWidth: 1100 }}>
       <style>{`
@@ -720,20 +727,23 @@ export default function ItemDetail() {
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={{ fontWeight: 700 }}>Empfangsbestätigung Eigentümer/Abholer</div>
 
-                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <label style={labelInline}>
-                    Übergebener Finderlohn (CHF)
-                    <input
-                      value={ownerRewardAmount}
-                      onChange={(e) => setOwnerRewardAmount(e.target.value)}
-                      placeholder="z.B. 50"
-                      style={inputInline}
-                    />
-                  </label>
-                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
-                    Vorschau: {fmtCHFInline(ownerRewardAmount)}
+                {/* ✅ Nur anzeigen, wenn Finderlohn gewünscht */}
+                {wantsReward ? (
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <label style={labelInline}>
+                      Übergebener Finderlohn (CHF)
+                      <input
+                        value={ownerRewardAmount}
+                        onChange={(e) => setOwnerRewardAmount(e.target.value)}
+                        placeholder="z.B. 50"
+                        style={inputInline}
+                      />
+                    </label>
+                    <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                      Vorschau: {fmtCHFInline(ownerRewardAmount)}
+                    </div>
                   </div>
-                </div>
+                ) : null}
 
                 <div style={footerRow}>
                   <button
