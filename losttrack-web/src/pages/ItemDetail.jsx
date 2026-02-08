@@ -1,5 +1,5 @@
 // src/pages/ItemDetail.jsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   getLostItemById,
@@ -31,13 +31,20 @@ function Accordion({
 }) {
   const [open, setOpen] = useState(!!defaultOpen);
 
+  // verhindert onToggle beim ersten Render (Mount)
+  const didMountRef = useRef(false);
+
   function toggle() {
-    setOpen((v) => {
-      const next = !v;
-      if (typeof onToggle === "function") onToggle(next);
-      return next;
-    });
+    setOpen((v) => !v);
   }
+
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
+    if (typeof onToggle === "function") onToggle(open);
+  }, [open, onToggle]);
 
   function onKeyDown(e) {
     if (e.key === "Enter" || e.key === " ") {
@@ -294,11 +301,15 @@ function AuditRow({ entry }) {
         alignItems: "baseline",
       }}
     >
-      <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>{fmtDateTime(entry?.at)}</div>
+      <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>
+        {fmtDateTime(entry?.at)}
+      </div>
 
       <div>
         <div style={{ fontWeight: 700 }}>{title}</div>
-        {detail ? <div style={{ marginTop: 3, color: "var(--muted)", fontSize: 13 }}>{detail}</div> : null}
+        {detail ? (
+          <div style={{ marginTop: 3, color: "var(--muted)", fontSize: 13 }}>{detail}</div>
+        ) : null}
 
         <DiffList diff={entry?.diff} />
       </div>
@@ -916,11 +927,15 @@ export default function ItemDetail() {
                   return (
                     <div key={e.id || `${e.at}-${e.type}`} style={{ paddingBottom: 10 }}>
                       <div className="print-audit-row">
-                        <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>{fmtDateTime(e?.at)}</div>
+                        <div style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>
+                          {fmtDateTime(e?.at)}
+                        </div>
                         <div style={{ fontWeight: 700 }}>
                           {title}
                           {detail ? (
-                            <div style={{ fontWeight: 400, fontSize: 12, opacity: 0.85, marginTop: 2 }}>{detail}</div>
+                            <div style={{ fontWeight: 400, fontSize: 12, opacity: 0.85, marginTop: 2 }}>
+                              {detail}
+                            </div>
                           ) : null}
                         </div>
                         <div style={{ textAlign: "right", opacity: 0.85 }}>{nonEmpty(a)}</div>
