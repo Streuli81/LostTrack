@@ -15,7 +15,8 @@ import InvestigationSteps from "../components/InvestigationSteps";
 import PartyCardEditor from "../components/PartyCardEditor";
 import ReceiptPrint from "../print/ReceiptPrint.jsx";
 
-const STATUS = ["OPEN", "IN_PROGRESS", "CLOSED"];
+// ✅ Statusliste an Domain anpassen (sonst kann “Ungültiger Status” passieren)
+const STATUS = ["OPEN", "RETURNED", "DISPOSED", "TRANSFERRED"];
 
 /* ---------------------------
  * Generic Accordion (no libs)
@@ -130,21 +131,44 @@ function labelForPath(path) {
     "item.manualLabel": "Gegenstand (Manuell)",
     "item.description": "Beschreibung",
 
-    "finder.name": "Finder Name",
-    "finder.address": "Finder Adresse",
+    // ✅ Neu: Finder detailliert
+    "finder.firstName": "Finder Vorname",
+    "finder.lastName": "Finder Name",
+    "finder.street": "Finder Strasse",
+    "finder.streetNo": "Finder Nr.",
+    "finder.zip": "Finder PLZ",
+    "finder.city": "Finder Ort",
     "finder.phone": "Finder Telefon",
     "finder.email": "Finder E-Mail",
     "finder.rewardRequested": "Finderlohn",
 
-    "owner.name": "Eigentümer Name",
-    "owner.address": "Eigentümer Adresse",
+    // ✅ Neu: Owner detailliert
+    "owner.firstName": "Eigentümer Vorname",
+    "owner.lastName": "Eigentümer Name",
+    "owner.street": "Eigentümer Strasse",
+    "owner.streetNo": "Eigentümer Nr.",
+    "owner.zip": "Eigentümer PLZ",
+    "owner.city": "Eigentümer Ort",
     "owner.phone": "Eigentümer Telefon",
     "owner.email": "Eigentümer E-Mail",
 
-    "collector.name": "Abholer Name",
-    "collector.address": "Abholer Adresse",
+    // ✅ Neu: Collector detailliert
+    "collector.firstName": "Abholer Vorname",
+    "collector.lastName": "Abholer Name",
+    "collector.street": "Abholer Strasse",
+    "collector.streetNo": "Abholer Nr.",
+    "collector.zip": "Abholer PLZ",
+    "collector.city": "Abholer Ort",
     "collector.phone": "Abholer Telefon",
     "collector.email": "Abholer E-Mail",
+
+    // Legacy (für alte Audit-Einträge)
+    "finder.name": "Finder Name (alt)",
+    "finder.address": "Finder Adresse (alt)",
+    "owner.name": "Eigentümer Name (alt)",
+    "owner.address": "Eigentümer Adresse (alt)",
+    "collector.name": "Abholer Name (alt)",
+    "collector.address": "Abholer Adresse (alt)",
 
     "receipts.length": "Quittungen (Anzahl)",
   };
@@ -323,8 +347,32 @@ function AuditRow({ entry }) {
  * Receipt helpers (UI)
  * --------------------------- */
 
+// ✅ Neu: “Name vorhanden” = Vorname oder Nachname oder (Legacy) name
+function personDisplayName(p) {
+  if (!p) return "";
+  const fn = (p.firstName || "").toString().trim();
+  const ln = (p.lastName || "").toString().trim();
+  const legacy = (p.name || "").toString().trim();
+  return [fn, ln].filter(Boolean).join(" ").trim() || legacy;
+}
+
 function hasName(p) {
-  return !!(p?.name || "").toString().trim();
+  return !!personDisplayName(p);
+}
+
+function personAddressLine(p) {
+  if (!p) return "";
+  const street = (p.street || "").toString().trim();
+  const streetNo = (p.streetNo || "").toString().trim();
+  const zip = (p.zip || "").toString().trim();
+  const city = (p.city || "").toString().trim();
+  const legacy = (p.address || "").toString().trim();
+
+  const line1 = [street, streetNo].filter(Boolean).join(" ").trim();
+  const line2 = [zip, city].filter(Boolean).join(" ").trim();
+
+  const merged = [line1, line2].filter(Boolean).join(", ").trim();
+  return merged || legacy;
 }
 
 function toNumberOrNull(v) {
@@ -473,9 +521,9 @@ export default function ItemDetail() {
   const canOwnerReceipt = hasOwner || hasCollector;
   const canFinderReceipt = hasCollector || hasFinder;
 
-  // Empfänger-Name (Default)
-  const ownerRecipientName = (item?.owner?.name || item?.collector?.name || "").toString().trim();
-  const finderRecipientName = (item?.collector?.name || item?.finder?.name || "").toString().trim();
+  // ✅ Neu: Empfänger-Name (Default) aus firstName/lastName (Fallback legacy)
+  const ownerRecipientName = (personDisplayName(item?.owner) || personDisplayName(item?.collector) || "").trim();
+  const finderRecipientName = (personDisplayName(item?.collector) || personDisplayName(item?.finder) || "").trim();
 
   const finderReasonText =
     finderReceiptReason === "REWARD_PAYOUT" ? "Finderlohn-Abholung" : "Eigentümer unbekannt";
@@ -628,7 +676,7 @@ export default function ItemDetail() {
                     onClick={() => {
                       triggerReceiptPrint({
                         receiptType: "FUND_RECEIPT",
-                        recipient: (item?.finder?.name || "").toString().trim(),
+                        recipient: personDisplayName(item?.finder),
                         amount: null,
                         reason: "",
                       });
@@ -898,21 +946,22 @@ export default function ItemDetail() {
 
                 <div className="print-k">Finder</div>
                 <div>
-                  {nonEmpty(item?.finder?.name)} – {nonEmpty(item?.finder?.phone)} – {nonEmpty(item?.finder?.email)}
+                  {nonEmpty(personDisplayName(item?.finder))} · {nonEmpty(personAddressLine(item?.finder))} ·{" "}
+                  {nonEmpty(item?.finder?.phone)} · {nonEmpty(item?.finder?.email)}
                   {item?.finder?.rewardRequested ? " (Finderlohn gewünscht)" : ""}
                 </div>
 
                 <div className="print-k">Eigentümer</div>
                 <div>
                   {item?.owner
-                    ? `${nonEmpty(item?.owner?.name)} – ${nonEmpty(item?.owner?.phone)} – ${nonEmpty(item?.owner?.email)}`
+                    ? `${nonEmpty(personDisplayName(item?.owner))} · ${nonEmpty(personAddressLine(item?.owner))} · ${nonEmpty(item?.owner?.phone)} · ${nonEmpty(item?.owner?.email)}`
                     : "—"}
                 </div>
 
                 <div className="print-k">Abholer</div>
                 <div>
                   {item?.collector
-                    ? `${nonEmpty(item?.collector?.name)} – ${nonEmpty(item?.collector?.phone)} – ${nonEmpty(item?.collector?.email)}`
+                    ? `${nonEmpty(personDisplayName(item?.collector))} · ${nonEmpty(personAddressLine(item?.collector))} · ${nonEmpty(item?.collector?.phone)} · ${nonEmpty(item?.collector?.email)}`
                     : "—"}
                 </div>
               </div>

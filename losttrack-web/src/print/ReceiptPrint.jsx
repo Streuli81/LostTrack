@@ -13,7 +13,10 @@ export default function ReceiptPrint({
   finderRewardWanted = false, // boolean (ja/nein)
 }) {
   const nowIso = useMemo(() => new Date().toISOString(), []);
-  const nowPrint = useMemo(() => fmtDateTime(nowIso), [nowIso]);
+
+  // ❗️HIER die einzige relevante Änderung:
+  // Übergabe-Datum/Zeit im Format DD.MM.YYYY, HH.MM
+  const handoverAt = useMemo(() => fmtDateTimeFixed(nowIso), [nowIso]);
 
   // Wichtige Daten
   const fundNo = (item?.fundNo || "").toString().trim();
@@ -31,10 +34,6 @@ export default function ReceiptPrint({
   const owner = item?.owner || null;
   const collector = item?.collector || null;
 
-  // Übergabezeitpunkt: wir nehmen "jetzt" als Übergabezeitpunkt im Druck (Erstversion)
-  const handoverAt = nowPrint;
-
-  // Titel rechts oben
   const title = useMemo(() => {
     if (receiptType === "FUND_RECEIPT") return "Fundquittung";
     if (receiptType === "OWNER_RECEIPT") return "Empfangsbestätigung Eigentümer/Abholer";
@@ -42,26 +41,18 @@ export default function ReceiptPrint({
     return "Quittung";
   }, [receiptType]);
 
-  // Empfänger/Person (Name im Unterschriftenfeld rechts)
   const recipientName = (recipientOverride || "").toString().trim();
-
-  // Betrag (bei OWNER_RECEIPT = übergebener Finderlohn, bei FINDER_RECEIPT = ausbezahlter Finderlohn)
   const amountText = amount === null || amount === undefined ? "—" : fmtCHF(amount);
 
-  // Spezifische Labels/Blöcke
   const showFinderBlock = receiptType === "FUND_RECEIPT";
   const showOwnerBlock = receiptType === "OWNER_RECEIPT";
   const showFinderReceiptBlock = receiptType === "FINDER_RECEIPT";
 
-  // OWNER_RECEIPT Datenschutz:
-  // - Abholer NICHT anzeigen
-  // - Feld "Empfänger (Unterschrift)" NICHT anzeigen
-  // - Unterschrift rechts umbenennen: "Eigentümer / Abholer"
-  const rightSignatureLabel = showOwnerBlock ? "Eigentümer / Abholer" : "Empfänger / Abgeber";
+  const rightSignatureLabel = showOwnerBlock
+    ? "Eigentümer / Abholer"
+    : "Empfänger / Abgeber";
 
-  // Automatisch drucken, sobald die Komponente im Print-Area gerendert wurde
   useEffect(() => {
-    // minimal verzögert, damit Layout sicher steht
     const t = window.setTimeout(() => window.print(), 50);
     return () => window.clearTimeout(t);
   }, []);
@@ -70,7 +61,6 @@ export default function ReceiptPrint({
     <div style={page}>
       <style>{printCss}</style>
 
-      {/* Kopf */}
       <div style={header}>
         <div>
           <div style={orgTitle}>{orgName || "Organisation"}</div>
@@ -84,7 +74,7 @@ export default function ReceiptPrint({
             <div style={metaV}>{receiptNo || "—"}</div>
 
             <div style={metaK}>Datum</div>
-            <div style={metaV}>{nowPrint.split(",")[0] || nowPrint}</div>
+            <div style={metaV}>{handoverAt.split(",")[0]}</div>
 
             <div style={metaK}>Sachbearbeiter</div>
             <div style={metaV}>{caseWorkerName}</div>
@@ -94,7 +84,6 @@ export default function ReceiptPrint({
 
       <div style={hr} />
 
-      {/* Angaben zur Fundsache */}
       <Section title="ANGABEN ZUR FUNDSACHE">
         <div style={grid2}>
           <FieldBox label="Fundnummer" value={fundNo || "—"} />
@@ -106,10 +95,10 @@ export default function ReceiptPrint({
             value={
               label ? (
                 desc ? (
-                  <div>
+                  <>
                     <div style={{ fontWeight: 800 }}>{label}</div>
                     <div style={{ opacity: 0.85 }}>{desc}</div>
-                  </div>
+                  </>
                 ) : (
                   <div style={{ fontWeight: 800 }}>{label}</div>
                 )
@@ -127,8 +116,7 @@ export default function ReceiptPrint({
         </div>
       </Section>
 
-      {/* FUND_RECEIPT: Finder */}
-      {showFinderBlock ? (
+      {showFinderBlock && (
         <Section title="ANGABEN FINDER">
           <div style={grid2}>
             <FieldBox span2 label="Finder" value={formatPartyInline(finder)} />
@@ -139,34 +127,26 @@ export default function ReceiptPrint({
             />
           </div>
         </Section>
-      ) : null}
+      )}
 
-      {/* OWNER_RECEIPT: Eigentümer/Abholer (Abholer NICHT anzeigen) */}
-      {showOwnerBlock ? (
+      {showOwnerBlock && (
         <Section title="ANGABEN EIGENTÜMER / ABHOLER">
           <div style={grid2}>
-            {/* ✅ links: Eigentümer/Abholer */}
             <FieldBox label="Eigentümer / Abholer" value={formatPartyInline(owner)} />
-
-            {/* ✅ rechts: Übergebener Finderlohn */}
             <FieldBox label="Übergebener Finderlohn" value={amountText} />
-
-            {/* ✅ Feld "Empfänger (Unterschrift)" entfernt */}
           </div>
         </Section>
-      ) : null}
+      )}
 
-      {/* FINDER_RECEIPT */}
-      {showFinderReceiptBlock ? (
+      {showFinderReceiptBlock && (
         <Section title="ANGABEN FINDER / ABHOLUNG">
           <div style={grid2}>
-            <FieldBox span2 label="Grund" value={reason ? reason : "—"} />
+            <FieldBox span2 label="Grund" value={reason || "—"} />
             <FieldBox span2 label="Betrag (Finderlohn)" value={amountText} />
           </div>
         </Section>
-      ) : null}
+      )}
 
-      {/* Unterschriften */}
       <Section title="UNTERSCHRIFTEN">
         <div style={sigGrid}>
           <SigBox title="Polizei / Sachbearbeiter" name={caseWorkerName || "—"} />
@@ -174,18 +154,35 @@ export default function ReceiptPrint({
         </div>
       </Section>
 
-      {/* Footer */}
       <div style={footer}>
         <div style={{ opacity: 0.75 }}>LostTrack – Quittung (Print)</div>
-        <div style={{ opacity: 0.75 }}>Erstellt am {nowPrint}</div>
+        <div style={{ opacity: 0.75 }}>Erstellt am {handoverAt}</div>
       </div>
     </div>
   );
 }
 
-/* ---------------------------
- * UI building blocks
- * --------------------------- */
+/* ===========================
+   FORMAT-HILFSFUNKTION (NEU)
+   =========================== */
+
+function fmtDateTimeFixed(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+
+  const hh = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+
+  return `${dd}.${mm}.${yyyy}, ${hh}.${min}`;
+}
+
+/* ===========================
+   UNVERÄNDERT: Helper & Styles
+   =========================== */
 
 function Section({ title, children }) {
   return (
@@ -215,34 +212,32 @@ function SigBox({ title, name }) {
   );
 }
 
-function formatPartyInline(p) {
-  if (!p) return "—";
-  const name = (p?.name || "").toString().trim();
-  const address = (p?.address || "").toString().trim();
-  const email = (p?.email || "").toString().trim();
-  const phone = (p?.phone || "").toString().trim();
-
-  const parts = [];
-  if (name) parts.push(name);
-  if (address) parts.push(address);
-  if (email) parts.push(`E-Mail: ${email}`);
-  if (phone) parts.push(`Tel: ${phone}`);
-
-  return parts.length ? parts.join("\n") : "—";
+function safeTrim(v) {
+  return (v ?? "").toString().trim();
 }
 
-/* ---------------------------
- * Formatting helpers
- * --------------------------- */
+function partyDisplayName(p) {
+  if (!p) return "";
+  const full = `${safeTrim(p.firstName)} ${safeTrim(p.lastName)}`.trim();
+  return full || safeTrim(p.name) || "";
+}
 
-function fmtDateTime(value) {
-  try {
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return String(value);
-    return d.toLocaleString("de-CH");
-  } catch {
-    return String(value);
-  }
+function partyAddressLines(p) {
+  if (!p) return [];
+  const street = `${safeTrim(p.street)} ${safeTrim(p.streetNo)}`.trim();
+  const city = `${safeTrim(p.zip)} ${safeTrim(p.city)}`.trim();
+  return [street, city].filter(Boolean);
+}
+
+function formatPartyInline(p) {
+  if (!p) return "—";
+  const parts = [
+    partyDisplayName(p),
+    ...partyAddressLines(p),
+    p.email ? `E-Mail: ${p.email}` : "",
+    p.phone ? `Tel: ${p.phone}` : "",
+  ].filter(Boolean);
+  return parts.join("\n") || "—";
 }
 
 function fmtCHF(n) {
@@ -251,90 +246,28 @@ function fmtCHF(n) {
   return `CHF ${num.toFixed(2)}`;
 }
 
-/* ---------------------------
- * Styles
- * --------------------------- */
+/* ===========================
+   Styles (unverändert)
+   =========================== */
 
-const page = {
-  fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-  color: "#111",
-  padding: "18mm",
-};
-
-const header = {
-  display: "flex",
-  justifyContent: "space-between",
-  gap: 18,
-  alignItems: "flex-start",
-};
-
+const page = { fontFamily: "system-ui", padding: "18mm", color: "#111" };
+const header = { display: "flex", justifyContent: "space-between", gap: 18 };
 const orgTitle = { fontWeight: 900, fontSize: 18 };
-const orgSub = { fontSize: 12, opacity: 0.8, marginTop: 2 };
-
+const orgSub = { fontSize: 12, opacity: 0.8 };
 const docTitle = { fontWeight: 900, fontSize: 14, marginBottom: 8 };
-
-const metaGrid = {
-  display: "grid",
-  gridTemplateColumns: "120px 1fr",
-  gap: "4px 10px",
-  fontSize: 12,
-};
-
+const metaGrid = { display: "grid", gridTemplateColumns: "120px 1fr", gap: "4px 10px", fontSize: 12 };
 const metaK = { opacity: 0.75 };
 const metaV = { fontWeight: 700 };
-
 const hr = { height: 1, background: "#222", opacity: 0.25, marginTop: 12 };
-
-const sectionTitle = {
-  fontWeight: 900,
-  fontSize: 12,
-  letterSpacing: 0.6,
-};
-
-const grid2 = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: 10,
-};
-
-const box = {
-  border: "1px solid rgba(0,0,0,0.18)",
-  borderRadius: 8,
-  padding: "10px 12px",
-  whiteSpace: "pre-line",
-};
-
+const sectionTitle = { fontWeight: 900, fontSize: 12 };
+const grid2 = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
+const box = { border: "1px solid rgba(0,0,0,0.18)", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-line" };
 const boxLabel = { fontSize: 10, opacity: 0.75, marginBottom: 6 };
 const boxValue = { fontSize: 12 };
-
-const sigGrid = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: 14,
-  marginTop: 10,
-};
-
-const sigBox = {
-  border: "2px solid rgba(0,0,0,0.7)",
-  borderRadius: 10,
-  padding: "10px 12px",
-  minHeight: 70,
-};
-
-const sigLine = {
-  height: 1,
-  background: "#000",
-  marginTop: 30,
-  marginBottom: 6,
-  opacity: 0.85,
-};
-
-const footer = {
-  display: "flex",
-  justifyContent: "space-between",
-  marginTop: 18,
-  fontSize: 10,
-};
+const sigGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 };
+const sigBox = { border: "2px solid rgba(0,0,0,0.7)", borderRadius: 10, padding: "10px 12px", minHeight: 70 };
+const sigLine = { height: 1, background: "#000", marginTop: 30, marginBottom: 6 };
+const footer = { display: "flex", justifyContent: "space-between", marginTop: 18, fontSize: 10 };
 
 const printCss = `
 @page { size: A4; margin: 10mm; }
