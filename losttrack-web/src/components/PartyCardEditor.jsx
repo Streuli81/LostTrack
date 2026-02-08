@@ -8,7 +8,10 @@ export default function PartyCardEditor({
   showRewardRequested = false,
   allowClear = false, // für Abholer: "Entfernen"
 
-  // ✅ NEU: Footer-Slot für "Quittungen / Zusatzfelder"
+  // ✅ NEU: Formular ausblenden (z.B. wenn "Abholer = Finder")
+  hideForm = false,
+
+  // ✅ Footer-Slot für "Quittungen / Zusatzfelder"
   footer = null, // ReactNode
   footerDivider = true, // Divider-Linie zwischen Form und Footer
 }) {
@@ -116,74 +119,80 @@ export default function PartyCardEditor({
       {err ? <Notice kind="error">{err}</Notice> : null}
       {msg ? <Notice kind="ok">{msg}</Notice> : null}
 
-      <div style={grid2}>
-        <Field
-          label="Vorname"
-          value={value.firstName}
-          onChange={(v) => setValue({ ...value, firstName: v })}
-          disabled={busy}
-        />
-        <Field
-          label="Name"
-          value={value.lastName}
-          onChange={(v) => setValue({ ...value, lastName: v })}
-          disabled={busy}
-        />
+      {/* ✅ Form optional ausblenden */}
+      {!hideForm ? (
+        <>
+          <div style={grid2}>
+            <Field
+              label="Vorname"
+              value={value.firstName}
+              onChange={(v) => setValue({ ...value, firstName: v })}
+              disabled={busy}
+            />
+            <Field
+              label="Name"
+              value={value.lastName}
+              onChange={(v) => setValue({ ...value, lastName: v })}
+              disabled={busy}
+            />
 
-        <Field
-          label="Strasse"
-          value={value.street}
-          onChange={(v) => setValue({ ...value, street: v })}
-          disabled={busy}
-        />
-        <Field
-          label="Nr."
-          value={value.streetNo}
-          onChange={(v) => setValue({ ...value, streetNo: v })}
-          disabled={busy}
-        />
+            <Field
+              label="Strasse"
+              value={value.street}
+              onChange={(v) => setValue({ ...value, street: v })}
+              disabled={busy}
+            />
+            <Field
+              label="Nr."
+              value={value.streetNo}
+              onChange={(v) => setValue({ ...value, streetNo: v })}
+              disabled={busy}
+            />
 
-        <Field
-          label="PLZ"
-          value={value.zip}
-          onChange={(v) => setValue({ ...value, zip: v })}
-          disabled={busy}
-        />
-        <Field
-          label="Ort"
-          value={value.city}
-          onChange={(v) => setValue({ ...value, city: v })}
-          disabled={busy}
-        />
+            <Field
+              label="PLZ"
+              value={value.zip}
+              onChange={(v) => setValue({ ...value, zip: v })}
+              disabled={busy}
+            />
+            <Field
+              label="Ort"
+              value={value.city}
+              onChange={(v) => setValue({ ...value, city: v })}
+              disabled={busy}
+            />
 
-        <Field
-          label="Telefon"
-          value={value.phone}
-          onChange={(v) => setValue({ ...value, phone: v })}
-          disabled={busy}
-        />
-        <Field
-          label="E-Mail"
-          value={value.email}
-          onChange={(v) => setValue({ ...value, email: v })}
-          disabled={busy}
-        />
-      </div>
+            <Field
+              label="Telefon"
+              value={value.phone}
+              onChange={(v) => setValue({ ...value, phone: v })}
+              disabled={busy}
+            />
+            <Field
+              label="E-Mail"
+              value={value.email}
+              onChange={(v) => setValue({ ...value, email: v })}
+              disabled={busy}
+            />
+          </div>
 
-      {showRewardRequested ? (
-        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-          <input
-            type="checkbox"
-            checked={!!value.rewardRequested}
-            onChange={(e) => setValue({ ...value, rewardRequested: e.target.checked })}
-            disabled={busy}
-          />
-          Finderlohn gewünscht
-        </label>
+          {showRewardRequested ? (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={!!value.rewardRequested}
+                onChange={(e) => setValue({ ...value, rewardRequested: e.target.checked })}
+                disabled={busy}
+              />
+              Finderlohn gewünscht
+            </label>
+          ) : null}
+        </>
       ) : null}
 
       <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        {allowClear ? (
+        {/* Entfernen nur sinnvoll, wenn Formular sichtbar (sonst ist Abholer=Finder o.ä.) */}
+        {allowClear && !hideForm ? (
           <button type="button" onClick={clear} disabled={busy}>
             Entfernen
           </button>
@@ -193,7 +202,7 @@ export default function PartyCardEditor({
         </button>
       </div>
 
-      {/* ✅ NEU: Footer innerhalb der Karte */}
+      {/* ✅ Footer innerhalb der Karte */}
       {footer ? (
         <div style={{ marginTop: 12 }}>
           {footerDivider ? <div style={divider} /> : null}

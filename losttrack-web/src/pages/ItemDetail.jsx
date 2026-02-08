@@ -162,6 +162,9 @@ function labelForPath(path) {
     "collector.phone": "Abholer Telefon",
     "collector.email": "Abholer E-Mail",
 
+    // ✅ Neu: Abholer = Finder
+    collectorSameAsFinder: "Abholer = Finder",
+
     // Legacy (für alte Audit-Einträge)
     "finder.name": "Finder Name (alt)",
     "finder.address": "Finder Adresse (alt)",
@@ -244,6 +247,7 @@ function describeAuditEntry(e) {
   if (t === "OWNER_UPDATED") return { title: "Eigentümer aktualisiert", actor };
   if (t === "COLLECTOR_UPDATED") {
     if (snap?.collector === null) return { title: "Abholer entfernt", actor };
+    if (snap?.collectorSameAsFinder) return { title: "Abholer = Finder gesetzt", actor };
     return { title: "Abholer aktualisiert", actor };
   }
 
@@ -412,6 +416,13 @@ export default function ItemDetail() {
 
   const item = useMemo(() => getLostItemById(id), [id, tick]);
   const auditAll = useMemo(() => listAuditLog(), [tick]);
+
+  // ✅ NEU: Abholer=Finder Checkbox-State (persistiert über collectorSameAsFinder)
+  const [collectorIsFinder, setCollectorIsFinder] = useState(false);
+
+  useEffect(() => {
+    setCollectorIsFinder(!!item?.collectorSameAsFinder);
+  }, [item?.collectorSameAsFinder]);
 
   function refresh() {
     setTick((x) => x + 1);
@@ -753,12 +764,45 @@ export default function ItemDetail() {
             }}
           />
 
+          {/* ✅ ABHOLER: Checkbox + optional Felder ausblenden */}
           <PartyCardEditor
             title="Abholer"
-            initialValue={item.collector}
-            allowClear={true}
+            initialValue={collectorIsFinder ? item.finder : item.collector}
+            allowClear={!collectorIsFinder}
+            hideForm={collectorIsFinder} // ✅ Felder ausblenden wenn Abholer=Finder
             footer={
-              <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gap: 12 }}>
+                {/* --- Abholer=Finder Toggle --- */}
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <input
+                      type="checkbox"
+                      checked={collectorIsFinder}
+                      onChange={(e) => setCollectorIsFinder(e.target.checked)}
+                      disabled={!hasFinder && !collectorIsFinder}
+                    />
+                    Abholer = Finder
+                  </label>
+
+                  {!hasFinder ? (
+                    <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                      (Finder muss zuerst erfasst werden, damit er als Abholer übernommen werden kann.)
+                    </div>
+                  ) : null}
+
+                  {collectorIsFinder && hasFinder ? (
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                      Übernahme aktiv: {nonEmpty(personDisplayName(item.finder))} ·{" "}
+                      {nonEmpty(personAddressLine(item.finder))}
+                    </div>
+                  ) : !collectorIsFinder ? (
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                      Personalien nur ausfüllen, wenn Abholer ≠ Finder.
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* --- Finder-Receipt Block bleibt wie vorher --- */}
                 <div style={{ fontWeight: 700 }}>Empfangsbestätigung Finder</div>
 
                 <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
@@ -830,7 +874,41 @@ export default function ItemDetail() {
               </div>
             }
             onSave={(collector) => {
-              const res = updateCollector({ id: item.id, collector, actor });
+              // ✅ Entfernen nur im "eigener Abholer" Modus sinnvoll
+              if (collector === null) {
+                const res = updateCollector({
+                  id: item.id,
+                  collector: null,
+                  actor,
+                  sameAsFinder: false,
+                });
+                if (res?.ok) refresh();
+                return res;
+              }
+
+              // ✅ Abholer = Finder
+              if (collectorIsFinder) {
+                if (!item.finder) {
+                  const res = { ok: false, error: "Finder ist leer. Bitte zuerst Finder erfassen." };
+                  return res;
+                }
+                const res = updateCollector({
+                  id: item.id,
+                  collector: item.finder, // Repo übernimmt/normalisiert
+                  actor,
+                  sameAsFinder: true,
+                });
+                if (res?.ok) refresh();
+                return res;
+              }
+
+              // ✅ Eigener Abholer
+              const res = updateCollector({
+                id: item.id,
+                collector,
+                actor,
+                sameAsFinder: false,
+              });
               if (res?.ok) refresh();
               return res;
             }}
@@ -954,15 +1032,20 @@ export default function ItemDetail() {
                 <div className="print-k">Eigentümer</div>
                 <div>
                   {item?.owner
-                    ? `${nonEmpty(personDisplayName(item?.owner))} · ${nonEmpty(personAddressLine(item?.owner))} · ${nonEmpty(item?.owner?.phone)} · ${nonEmpty(item?.owner?.email)}`
+                    ? `${nonEmpty(personDisplayName(item?.owner))} · ${nonEmpty(
+                        personAddressLine(item?.owner)
+                      )} · ${nonEmpty(item?.owner?.phone)} · ${nonEmpty(item?.owner?.email)}`
                     : "—"}
                 </div>
 
                 <div className="print-k">Abholer</div>
                 <div>
                   {item?.collector
-                    ? `${nonEmpty(personDisplayName(item?.collector))} · ${nonEmpty(personAddressLine(item?.collector))} · ${nonEmpty(item?.collector?.phone)} · ${nonEmpty(item?.collector?.email)}`
+                    ? `${nonEmpty(personDisplayName(item?.collector))} · ${nonEmpty(
+                        personAddressLine(item?.collector)
+                      )} · ${nonEmpty(item?.collector?.phone)} · ${nonEmpty(item?.collector?.email)}`
                     : "—"}
+                  {item?.collectorSameAsFinder ? " (Abholer = Finder)" : ""}
                 </div>
               </div>
             </div>

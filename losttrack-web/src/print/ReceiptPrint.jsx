@@ -8,13 +8,12 @@ export default function ReceiptPrint({
   orgContact,
   receiptNo,
   amount, // number | null
-  recipientOverride, // string
+  recipientOverride, // string (optional)
   reason, // string
   finderRewardWanted = false, // boolean (ja/nein)
 }) {
   const nowIso = useMemo(() => new Date().toISOString(), []);
 
-  // ❗️HIER die einzige relevante Änderung:
   // Übergabe-Datum/Zeit im Format DD.MM.YYYY, HH.MM
   const handoverAt = useMemo(() => fmtDateTimeFixed(nowIso), [nowIso]);
 
@@ -37,20 +36,45 @@ export default function ReceiptPrint({
   const title = useMemo(() => {
     if (receiptType === "FUND_RECEIPT") return "Fundquittung";
     if (receiptType === "OWNER_RECEIPT") return "Empfangsbestätigung Eigentümer/Abholer";
-    if (receiptType === "FINDER_RECEIPT") return "Empfangsbestätigung Finder";
+    if (receiptType === "FINDER_RECEIPT") return "Empfangsbestätigung Finder/Abholer";
     return "Quittung";
   }, [receiptType]);
 
-  const recipientName = (recipientOverride || "").toString().trim();
   const amountText = amount === null || amount === undefined ? "—" : fmtCHF(amount);
 
   const showFinderBlock = receiptType === "FUND_RECEIPT";
   const showOwnerBlock = receiptType === "OWNER_RECEIPT";
   const showFinderReceiptBlock = receiptType === "FINDER_RECEIPT";
 
-  const rightSignatureLabel = showOwnerBlock
-    ? "Eigentümer / Abholer"
-    : "Empfänger / Abgeber";
+  // ✅ Person automatisch bestimmen (Finder / Abholer / Eigentümer)
+  const selectedParty = useMemo(() => {
+    if (receiptType === "FUND_RECEIPT") return finder;
+
+    if (receiptType === "OWNER_RECEIPT") {
+      // Eigentümer bevorzugen, sonst Abholer
+      return hasPartyData(owner) ? owner : collector;
+    }
+
+    if (receiptType === "FINDER_RECEIPT") {
+      // Abholer bevorzugen, sonst Finder
+      return hasPartyData(collector) ? collector : finder;
+    }
+
+    // Fallback
+    return collector || finder || owner;
+  }, [receiptType, finder, owner, collector]);
+
+  // ✅ Empfängername für Unterschrift:
+  // 1) recipientOverride falls gesetzt
+  // 2) sonst aus selectedParty (first/last oder legacy name)
+  const recipientName = useMemo(() => {
+    const o = (recipientOverride || "").toString().trim();
+    if (o) return o;
+    const auto = partyDisplayName(selectedParty);
+    return auto || "—";
+  }, [recipientOverride, selectedParty]);
+
+  const rightSignatureLabel = showOwnerBlock ? "Eigentümer / Abholer" : "Empfänger / Abgeber";
 
   useEffect(() => {
     const t = window.setTimeout(() => window.print(), 50);
@@ -132,8 +156,13 @@ export default function ReceiptPrint({
       {showOwnerBlock && (
         <Section title="ANGABEN EIGENTÜMER / ABHOLER">
           <div style={grid2}>
-            <FieldBox label="Eigentümer / Abholer" value={formatPartyInline(owner)} />
-            <FieldBox label="Übergebener Finderlohn" value={amountText} />
+            {/* ✅ vorher: owner fix → jetzt: owner oder collector */}
+            <FieldBox
+              span2
+              label="Eigentümer / Abholer"
+              value={formatPartyInline(hasPartyData(owner) ? owner : collector)}
+            />
+            <FieldBox span2 label="Übergebener Finderlohn" value={amountText} />
           </div>
         </Section>
       )}
@@ -143,6 +172,9 @@ export default function ReceiptPrint({
           <div style={grid2}>
             <FieldBox span2 label="Grund" value={reason || "—"} />
             <FieldBox span2 label="Betrag (Finderlohn)" value={amountText} />
+
+            {/* ✅ NEU: Person anzeigen (Abholer oder Finder) */}
+            <FieldBox span2 label="Person (Finder / Abholer)" value={formatPartyInline(selectedParty)} />
           </div>
         </Section>
       )}
@@ -163,7 +195,7 @@ export default function ReceiptPrint({
 }
 
 /* ===========================
-   FORMAT-HILFSFUNKTION (NEU)
+   FORMAT-HILFSFUNKTION
    =========================== */
 
 function fmtDateTimeFixed(iso) {
@@ -181,7 +213,7 @@ function fmtDateTimeFixed(iso) {
 }
 
 /* ===========================
-   UNVERÄNDERT: Helper & Styles
+   Helper
    =========================== */
 
 function Section({ title, children }) {
@@ -218,15 +250,22 @@ function safeTrim(v) {
 
 function partyDisplayName(p) {
   if (!p) return "";
+  // neu
   const full = `${safeTrim(p.firstName)} ${safeTrim(p.lastName)}`.trim();
-  return full || safeTrim(p.name) || "";
+  if (full) return full;
+  // legacy fallback
+  return safeTrim(p.name) || "";
 }
 
 function partyAddressLines(p) {
   if (!p) return [];
+  // neu
   const street = `${safeTrim(p.street)} ${safeTrim(p.streetNo)}`.trim();
   const city = `${safeTrim(p.zip)} ${safeTrim(p.city)}`.trim();
-  return [street, city].filter(Boolean);
+  const lines = [street, city].filter(Boolean);
+  // legacy fallback
+  if (lines.length === 0 && safeTrim(p.address)) return [safeTrim(p.address)];
+  return lines;
 }
 
 function formatPartyInline(p) {
@@ -234,10 +273,28 @@ function formatPartyInline(p) {
   const parts = [
     partyDisplayName(p),
     ...partyAddressLines(p),
-    p.email ? `E-Mail: ${p.email}` : "",
-    p.phone ? `Tel: ${p.phone}` : "",
+    safeTrim(p.email) ? `E-Mail: ${safeTrim(p.email)}` : "",
+    safeTrim(p.phone) ? `Tel: ${safeTrim(p.phone)}` : "",
   ].filter(Boolean);
+
   return parts.join("\n") || "—";
+}
+
+function hasPartyData(p) {
+  if (!p) return false;
+  const keys = [
+    safeTrim(p.firstName),
+    safeTrim(p.lastName),
+    safeTrim(p.name),
+    safeTrim(p.street),
+    safeTrim(p.streetNo),
+    safeTrim(p.zip),
+    safeTrim(p.city),
+    safeTrim(p.address),
+    safeTrim(p.phone),
+    safeTrim(p.email),
+  ];
+  return keys.some((x) => !!x);
 }
 
 function fmtCHF(n) {
@@ -247,7 +304,7 @@ function fmtCHF(n) {
 }
 
 /* ===========================
-   Styles (unverändert)
+   Styles
    =========================== */
 
 const page = { fontFamily: "system-ui", padding: "18mm", color: "#111" };
@@ -261,7 +318,12 @@ const metaV = { fontWeight: 700 };
 const hr = { height: 1, background: "#222", opacity: 0.25, marginTop: 12 };
 const sectionTitle = { fontWeight: 900, fontSize: 12 };
 const grid2 = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
-const box = { border: "1px solid rgba(0,0,0,0.18)", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-line" };
+const box = {
+  border: "1px solid rgba(0,0,0,0.18)",
+  borderRadius: 8,
+  padding: "10px 12px",
+  whiteSpace: "pre-line",
+};
 const boxLabel = { fontSize: 10, opacity: 0.75, marginBottom: 6 };
 const boxValue = { fontSize: 12 };
 const sigGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 };

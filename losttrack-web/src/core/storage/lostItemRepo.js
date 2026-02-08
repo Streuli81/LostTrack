@@ -207,6 +207,12 @@ export function updateLostItem(input, { actor = null } = {}) {
     owner: formattedValue.owner ?? existing.owner,
     collector: formattedValue.collector ?? existing.collector,
 
+    // ✅ NEU: Flag nicht verlieren bei Edit-Mode
+    collectorSameAsFinder:
+      typeof formattedValue.collectorSameAsFinder === "boolean"
+        ? formattedValue.collectorSameAsFinder
+        : existing.collectorSameAsFinder,
+
     receipts: Array.isArray(existing.receipts) ? existing.receipts : [],
 
     updatedAt: now,
@@ -592,7 +598,13 @@ export function updateOwner({ id, owner, actor = null }) {
   return { ok: true, item: updated };
 }
 
-export function updateCollector({ id, collector, actor = null }) {
+/**
+ * ✅ Abholer aktualisieren + Flag "Abholer = Finder"
+ * - sameAsFinder=true: collector wird aus finder übernommen (oder aus übergebenem collector),
+ *   und collectorSameAsFinder wird true.
+ * - sameAsFinder=false: collector ist eigenständig (oder null) und collectorSameAsFinder false.
+ */
+export function updateCollector({ id, collector, sameAsFinder = false, actor = null }) {
   if (!id) return { ok: false, error: "Missing id" };
 
   const current = getLostItemById(id);
@@ -602,11 +614,23 @@ export function updateCollector({ id, collector, actor = null }) {
 
   const before = slimSnapshot(current);
 
-  const clean = collector === null ? null : sanitizeParty(collector);
+  let nextCollector = null;
+
+  if (sameAsFinder) {
+    // Finder muss existieren, sonst macht Flag keinen Sinn
+    const f = current?.finder;
+    if (!f) return { ok: false, error: "Finder ist leer. Bitte zuerst Finder erfassen." };
+
+    // Wenn caller collector mitgibt (z.B. item.finder), ok; sonst übernehmen wir aus current.finder
+    nextCollector = sanitizeParty(collector || f);
+  } else {
+    nextCollector = collector === null ? null : sanitizeParty(collector);
+  }
 
   const updated = normalizeOne({
     ...current,
-    collector: clean,
+    collector: nextCollector,
+    collectorSameAsFinder: !!sameAsFinder,
     updatedAt: now,
   });
 
@@ -620,6 +644,7 @@ export function updateCollector({ id, collector, actor = null }) {
     snapshot: {
       id: updated.id,
       collector: updated.collector,
+      collectorSameAsFinder: updated.collectorSameAsFinder,
       actor,
       at: now,
       before,
@@ -628,8 +653,10 @@ export function updateCollector({ id, collector, actor = null }) {
     diff: diffSnapshots(before, after),
   });
 
-  if (clean) {
-    appendAutoInvestigationStep(updated, actor, buildAutoText("Abholer", clean));
+  if (updated.collectorSameAsFinder) {
+    appendAutoInvestigationStep(updated, actor, "Abholer = Finder gesetzt.");
+  } else if (nextCollector) {
+    appendAutoInvestigationStep(updated, actor, buildAutoText("Abholer", nextCollector));
   } else {
     appendAutoInvestigationStep(updated, actor, "Abholer entfernt.");
   }
@@ -694,6 +721,10 @@ function slimSnapshot(item) {
     caseWorker: item.caseWorker,
     foundAt: item.foundAt,
     finder: item.finder,
+
+    // ✅ NEU: Flag ins Audit aufnehmen
+    collectorSameAsFinder: !!item.collectorSameAsFinder,
+
     item: {
       predefinedKey: item?.item?.predefinedKey || "",
       manualLabel: item?.item?.manualLabel || "",
@@ -807,6 +838,10 @@ function normalizeOne(item) {
   if (!("collector" in out)) out.collector = null;
   if (!Array.isArray(out.receipts)) out.receipts = [];
   if (!out.foundAt || typeof out.foundAt !== "object") out.foundAt = { date: "", time: "", location: "" };
+
+  // ✅ NEU: Default für Flag
+  if (!("collectorSameAsFinder" in out)) out.collectorSameAsFinder = false;
+
   return out;
 }
 
@@ -829,9 +864,6 @@ function toIsoOrNull(value) {
 /**
  * ✅ Neues Party-Format (wie PartyCardEditor):
  * { firstName, lastName, street, streetNo, zip, city, phone, email }
- *
- * Hinweis: Legacy-Keys (name/address) werden NICHT mehr gespeichert,
- * aber PartyCardEditor kann sie weiterhin lesen und migrieren.
  */
 function sanitizeParty(p) {
   if (!p) return null;
