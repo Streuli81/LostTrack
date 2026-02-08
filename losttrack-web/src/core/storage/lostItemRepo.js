@@ -87,12 +87,22 @@ export function searchLostItems(q = {}) {
 
   const sorted = [...records].sort((a, b) => (b?.createdAt || "").localeCompare(a?.createdAt || ""));
 
+  const partyFullName = (p) => {
+    if (!p) return "";
+    // legacy fallback (name)
+    const legacy = (p?.name ?? "").toString().trim();
+    if (legacy) return legacy;
+    const fn = (p?.firstName ?? "").toString().trim();
+    const ln = (p?.lastName ?? "").toString().trim();
+    return [fn, ln].filter(Boolean).join(" ").trim();
+  };
+
   return normalizeAll(
     sorted.filter((r) => {
       if (fundNo && !norm(r.fundNo).includes(fundNo)) return false;
 
       if (finder) {
-        const fn = norm(r?.finder?.name);
+        const fn = norm(partyFullName(r?.finder));
         const fp = norm(r?.finder?.phone);
         const fe = norm(r?.finder?.email);
         if (!(fn.includes(finder) || fp.includes(finder) || fe.includes(finder))) return false;
@@ -816,24 +826,45 @@ function toIsoOrNull(value) {
 
 /* ---------- sanitize helpers ---------- */
 
+/**
+ * ✅ Neues Party-Format (wie PartyCardEditor):
+ * { firstName, lastName, street, streetNo, zip, city, phone, email }
+ *
+ * Hinweis: Legacy-Keys (name/address) werden NICHT mehr gespeichert,
+ * aber PartyCardEditor kann sie weiterhin lesen und migrieren.
+ */
 function sanitizeParty(p) {
-  if (!p) return { name: "", address: "", phone: "", email: "" };
+  if (!p) return null;
+
   return {
-    name: (p.name ?? "").toString().trim(),
-    address: (p.address ?? "").toString().trim(),
+    firstName: (p.firstName ?? "").toString().trim(),
+    lastName: (p.lastName ?? "").toString().trim(),
+    zip: (p.zip ?? "").toString().trim(),
+    city: (p.city ?? "").toString().trim(),
+    street: (p.street ?? "").toString().trim(),
+    streetNo: (p.streetNo ?? "").toString().trim(),
     phone: (p.phone ?? "").toString().trim(),
     email: (p.email ?? "").toString().trim(),
   };
 }
 
+/**
+ * ✅ Neues Finder-Format + rewardRequested:
+ * { firstName, lastName, street, streetNo, zip, city, phone, email, rewardRequested }
+ */
 function sanitizeFinder(f) {
-  const base = f || {};
+  if (!f) return null;
+
   return {
-    name: (base.name ?? "").toString().trim(),
-    address: (base.address ?? "").toString().trim(),
-    phone: (base.phone ?? "").toString().trim(),
-    email: (base.email ?? "").toString().trim(),
-    rewardRequested: !!base.rewardRequested,
+    firstName: (f.firstName ?? "").toString().trim(),
+    lastName: (f.lastName ?? "").toString().trim(),
+    zip: (f.zip ?? "").toString().trim(),
+    city: (f.city ?? "").toString().trim(),
+    street: (f.street ?? "").toString().trim(),
+    streetNo: (f.streetNo ?? "").toString().trim(),
+    phone: (f.phone ?? "").toString().trim(),
+    email: (f.email ?? "").toString().trim(),
+    rewardRequested: !!f.rewardRequested,
   };
 }
 
@@ -878,9 +909,12 @@ function appendAutoInvestigationStep(item, actor, what) {
 }
 
 function buildAutoText(roleLabel, p) {
-  const name = (p?.name || "").trim();
-  const phone = (p?.phone || "").trim();
-  const email = (p?.email || "").trim();
+  // ✅ kompatibel: neues Format (first/last) + Legacy (name)
+  const legacyName = (p?.name || "").toString().trim();
+  const name = legacyName || [p?.firstName, p?.lastName].filter(Boolean).join(" ").trim();
+
+  const phone = (p?.phone || "").toString().trim();
+  const email = (p?.email || "").toString().trim();
 
   const parts = [];
   if (name) parts.push(`Name: ${name}`);
