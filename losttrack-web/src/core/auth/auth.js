@@ -5,9 +5,16 @@ const STORAGE_VERSION = "v1";
 const KEY_USERS = `lostItems.users.${STORAGE_VERSION}`;
 const KEY_SESSION = `lostItems.session.${STORAGE_VERSION}`;
 
+/**
+ * Rollen/Permissions (v1)
+ * - ADMIN: alles
+ * - EDITOR: erfassen/bearbeiten + drucken
+ * - VIEWER: nur lesen
+ */
 const ROLE_PERMS = {
   ADMIN: ["*"],
-  USER: ["ITEM_CREATE", "ITEM_EDIT"],
+  EDITOR: ["ITEM_CREATE", "ITEM_EDIT", "RECEIPT_PRINT", "CASHBOOK_VIEW", "CASHBOOK_POST"],
+  VIEWER: ["ITEM_VIEW", "CASHBOOK_VIEW"],
 };
 
 function fnv1a32Hex(str) {
@@ -84,9 +91,15 @@ export function getCurrentUserName() {
 export function hasPermission(action) {
   const u = getCurrentUser();
   if (!u) return false;
-  const role = String(u.role || "USER").toUpperCase();
+
+  const role = String(u.role || "VIEWER").toUpperCase();
   const perms = ROLE_PERMS[role] || [];
+
   if (perms.includes("*")) return true;
+
+  // ITEM_VIEW als Default, wenn eingeloggt
+  if (action === "ITEM_VIEW") return true;
+
   return perms.includes(action);
 }
 

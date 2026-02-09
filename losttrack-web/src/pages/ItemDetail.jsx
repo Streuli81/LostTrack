@@ -162,8 +162,13 @@ function labelForPath(path) {
     "collector.phone": "Abholer Telefon",
     "collector.email": "Abholer E-Mail",
 
-    // ✅ Neu: Abholer = Finder
     collectorSameAsFinder: "Abholer = Finder",
+
+    // ✅ NEU: Finderlohn-Auszahlung (passend zu lostItemRepo.js)
+    "finderRewardPayout.paidAt": "Finderlohn ausbezahlt am",
+    "finderRewardPayout.amountCents": "Finderlohn Betrag (Rappen)",
+    "finderRewardPayout.actor": "Finderlohn ausbezahlt durch",
+    "finderRewardPayout.ledgerId": "Kassenbuch-ID",
 
     // Legacy (für alte Audit-Einträge)
     "finder.name": "Finder Name (alt)",
@@ -255,6 +260,14 @@ function describeAuditEntry(e) {
     const r = snap?.receipt;
     const extra = r?.id ? `(${r.id})` : "";
     return { title: `Quittung gedruckt ${extra}`.trim(), actor };
+  }
+
+  // ✅ Finderlohn-Auszahlung (kommt aus lostItemRepo.js: FINDER_REWARD_PAID)
+  if (t === "FINDER_REWARD_PAID") {
+    const cents = Number(snap?.amountCents || 0) || 0;
+    const chf = (cents / 100).toFixed(2);
+    const extra = snap?.ledgerId ? `Kasse: ${snap.ledgerId}` : "";
+    return { title: `Finderlohn ausbezahlt (CHF ${chf})`, detail: extra || null, actor };
   }
 
   return { title: t, actor };
@@ -351,7 +364,6 @@ function AuditRow({ entry }) {
  * Receipt helpers (UI)
  * --------------------------- */
 
-// ✅ Neu: “Name vorhanden” = Vorname oder Nachname oder (Legacy) name
 function personDisplayName(p) {
   if (!p) return "";
   const fn = (p.firstName || "").toString().trim();
@@ -393,6 +405,13 @@ function fmtCHFInline(v) {
   return `CHF ${n.toFixed(2)}`;
 }
 
+function toCentsStrict(chfNumber) {
+  if (typeof chfNumber !== "number" || !Number.isFinite(chfNumber)) return null;
+  const cents = Math.round(chfNumber * 100);
+  if (!Number.isFinite(cents) || cents <= 0) return null;
+  return cents;
+}
+
 /* ---------------------------
  * Component
  * --------------------------- */
@@ -407,17 +426,20 @@ export default function ItemDetail() {
 
   // Receipt UI state
   const [receiptMode, setReceiptMode] = useState("REPORT"); // REPORT | RECEIPT
-  const [receiptJob, setReceiptJob] = useState(null); // { type, receiptNo, amount, recipient, reason, orgName, orgContact }
+  const [receiptJob, setReceiptJob] = useState(null);
 
   // Beträge: NUR Polizei trägt ein (Owner gibt ab / Finder holt ab)
   const [ownerRewardAmount, setOwnerRewardAmount] = useState("");
   const [finderReceiptReason, setFinderReceiptReason] = useState("OWNER_UNKNOWN"); // OWNER_UNKNOWN | REWARD_PAYOUT
   const [finderRewardPayoutAmount, setFinderRewardPayoutAmount] = useState("");
 
+  // ✅ Notiz/Grund für Finderlohn-Abholung
+  const [finderPayoutNote, setFinderPayoutNote] = useState("");
+
   const item = useMemo(() => getLostItemById(id), [id, tick]);
   const auditAll = useMemo(() => listAuditLog(), [tick]);
 
-  // ✅ NEU: Abholer=Finder Checkbox-State (persistiert über collectorSameAsFinder)
+  // ✅ Abholer=Finder Checkbox-State
   const [collectorIsFinder, setCollectorIsFinder] = useState(false);
 
   useEffect(() => {
@@ -447,18 +469,15 @@ export default function ItemDetail() {
     else alert(res.error || "Statuswechsel fehlgeschlagen");
   }
 
-  // Optional: bis Login kommt, kannst du hier einen fixen actor setzen.
-  const actor = null; // z.B. "M. S."
+  // Actor bewusst null lassen: Repo nimmt Login-User automatisch
+  const actor = null;
 
-  // ✅ WICHTIG: Nur Audit für diese Fundsache zeigen (primär über snapshot.id)
   const auditForItem = useMemo(() => {
     const all = auditAll || [];
 
-    // 1) Primär: snapshot.id match
     const byId = all.filter((e) => e?.snapshot?.id && e.snapshot.id === item.id);
     if (byId.length > 0) return byId;
 
-    // 2) Fallback nur wenn byId leer und fundNo existiert (für alte Einträge)
     if (item.fundNo) {
       return all.filter((e) => e?.fundNo && e.fundNo === item.fundNo);
     }
@@ -491,7 +510,12 @@ export default function ItemDetail() {
     window.print();
   }
 
-  function triggerReceiptPrint({ receiptType, recipient, amount, reason }) {
+  /**
+   * ✅ Zentraler Print-Trigger.
+   * Wenn Finderlohn-Abholung aktiv ist, wird finderRewardPayout an printReceipt() übergeben.
+   * Damit bucht das Repo zuerst ins Kassenbuch (OUT) und sperrt Doppelzahlungen.
+   */
+  function triggerReceiptPrint({ receiptType, recipient, amount, reason, finderRewardPayout = null }) {
     const res = printReceipt({
       id: item.id,
       receiptType,
@@ -499,6 +523,9 @@ export default function ItemDetail() {
       amount,
       actor,
       notes: reason || null,
+
+      // ✅ optional: { enabled, amountCents, reason }
+      finderRewardPayout,
     });
 
     if (!res?.ok) {
@@ -532,9 +559,16 @@ export default function ItemDetail() {
   const canOwnerReceipt = hasOwner || hasCollector;
   const canFinderReceipt = hasCollector || hasFinder;
 
-  // ✅ Neu: Empfänger-Name (Default) aus firstName/lastName (Fallback legacy)
-  const ownerRecipientName = (personDisplayName(item?.owner) || personDisplayName(item?.collector) || "").trim();
-  const finderRecipientName = (personDisplayName(item?.collector) || personDisplayName(item?.finder) || "").trim();
+  const ownerRecipientName = (
+    personDisplayName(item?.owner) ||
+    personDisplayName(item?.collector) ||
+    ""
+  ).trim();
+  const finderRecipientName = (
+    personDisplayName(item?.collector) ||
+    personDisplayName(item?.finder) ||
+    ""
+  ).trim();
 
   const finderReasonText =
     finderReceiptReason === "REWARD_PAYOUT" ? "Finderlohn-Abholung" : "Eigentümer unbekannt";
@@ -544,12 +578,27 @@ export default function ItemDetail() {
 
   const ownerAmount = toNumberOrNull(ownerRewardAmount);
 
-  // ✅ NEU: Wenn Finderlohn NICHT gewünscht -> Owner-Betrag leeren (kein "hängender" Wert)
+  // ✅ Finderlohn bereits ausbezahlt?
+  const rewardPaid = !!item?.finderRewardPayout?.paid;
+  const rewardPaidAt = item?.finderRewardPayout?.paidAt || null;
+  const rewardPaidCents = Number(item?.finderRewardPayout?.amountCents || 0) || 0;
+  const rewardPaidCHF = rewardPaid ? `CHF ${(rewardPaidCents / 100).toFixed(2)}` : null;
+
+  // ✅ Wenn Finderlohn NICHT gewünscht -> Owner-Betrag & Payout-Felder leeren
   useEffect(() => {
     if (!wantsReward) {
       setOwnerRewardAmount("");
+      if (finderReceiptReason === "REWARD_PAYOUT") setFinderReceiptReason("OWNER_UNKNOWN");
+      setFinderRewardPayoutAmount("");
+      setFinderPayoutNote("");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantsReward]);
+
+  // ✅ Button sperren: Auszahlung darf nicht nochmals gedruckt werden, wenn schon bezahlt
+  const finderReceiptDisabled =
+    !canFinderReceipt ||
+    (finderReceiptReason === "REWARD_PAYOUT" && (rewardPaid || !wantsReward));
 
   return (
     <section style={{ maxWidth: 1100 }}>
@@ -727,7 +776,6 @@ export default function ItemDetail() {
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={{ fontWeight: 700 }}>Empfangsbestätigung Eigentümer/Abholer</div>
 
-                {/* ✅ Nur anzeigen, wenn Finderlohn gewünscht */}
                 {wantsReward ? (
                   <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                     <label style={labelInline}>
@@ -774,15 +822,13 @@ export default function ItemDetail() {
             }}
           />
 
-          {/* ✅ ABHOLER: Checkbox + optional Felder ausblenden */}
           <PartyCardEditor
             title="Abholer"
             initialValue={collectorIsFinder ? item.finder : item.collector}
             allowClear={!collectorIsFinder}
-            hideForm={collectorIsFinder} // ✅ Felder ausblenden wenn Abholer=Finder
+            hideForm={collectorIsFinder}
             footer={
               <div style={{ display: "grid", gap: 12 }}>
-                {/* --- Abholer=Finder Toggle --- */}
                 <div style={{ display: "grid", gap: 8 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <input
@@ -812,7 +858,6 @@ export default function ItemDetail() {
                   ) : null}
                 </div>
 
-                {/* --- Finder-Receipt Block bleibt wie vorher --- */}
                 <div style={{ fontWeight: 700 }}>Empfangsbestätigung Finder</div>
 
                 <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
@@ -832,7 +877,7 @@ export default function ItemDetail() {
                       name="finder-reason"
                       checked={finderReceiptReason === "REWARD_PAYOUT"}
                       onChange={() => setFinderReceiptReason("REWARD_PAYOUT")}
-                      disabled={!wantsReward}
+                      disabled={!wantsReward || rewardPaid}
                     />
                     Finderlohn-Abholung
                   </label>
@@ -842,21 +887,46 @@ export default function ItemDetail() {
                       (Finderlohn-Abholung nur möglich, wenn Finderlohn gewünscht)
                     </div>
                   ) : null}
+
+                  {rewardPaid ? (
+                    <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                      Bereits ausbezahlt: {rewardPaidCHF} · {fmtDateTime(rewardPaidAt)}
+                      {item?.finderRewardPayout?.ledgerId ? ` · Kasse: ${item.finderRewardPayout.ledgerId}` : ""}
+                    </div>
+                  ) : null}
                 </div>
 
                 {finderReceiptReason === "REWARD_PAYOUT" ? (
-                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                    <label style={labelInline}>
-                      Ausbezahlter Finderlohn (CHF)
-                      <input
-                        value={finderRewardPayoutAmount}
-                        onChange={(e) => setFinderRewardPayoutAmount(e.target.value)}
-                        placeholder="z.B. 50"
-                        style={inputInline}
-                      />
-                    </label>
-                    <div style={{ color: "var(--muted)", fontSize: 12 }}>
-                      Vorschau: {fmtCHFInline(finderRewardPayoutAmount)}
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <label style={labelInline}>
+                        Ausbezahlter Finderlohn (CHF)
+                        <input
+                          value={finderRewardPayoutAmount}
+                          onChange={(e) => setFinderRewardPayoutAmount(e.target.value)}
+                          placeholder="z.B. 50"
+                          style={inputInline}
+                        />
+                      </label>
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                        Vorschau: {fmtCHFInline(finderRewardPayoutAmount)}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <label style={labelInline}>
+                        Notiz / Grund
+                        <input
+                          value={finderPayoutNote}
+                          onChange={(e) => setFinderPayoutNote(e.target.value)}
+                          placeholder="z.B. Finderlohn-Abholung"
+                          style={{ ...inputInline, minWidth: 260 }}
+                        />
+                      </label>
+
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                        Beim Druck wird automatisch im Kassenbuch gebucht und Doppelzahlung gesperrt.
+                      </div>
                     </div>
                   </div>
                 ) : null}
@@ -864,13 +934,36 @@ export default function ItemDetail() {
                 <div style={footerRow}>
                   <button
                     type="button"
-                    disabled={!canFinderReceipt}
+                    disabled={finderReceiptDisabled}
                     onClick={() => {
+                      // ✅ Wenn Finderlohn-Abholung gewählt: amountCents + Buchung aktivieren
+                      let payout = null;
+
+                      if (finderReceiptReason === "REWARD_PAYOUT") {
+                        const amountChf = toNumberOrNull(finderRewardPayoutAmount);
+                        if (amountChf === null || amountChf <= 0) {
+                          alert("Bitte einen gültigen Betrag > 0 eingeben.");
+                          return;
+                        }
+                        const cents = toCentsStrict(amountChf);
+                        if (cents === null) {
+                          alert("Ungültiger Betrag.");
+                          return;
+                        }
+
+                        payout = {
+                          enabled: true,
+                          amountCents: cents,
+                          reason: (finderPayoutNote || "").toString().trim() || "Finderlohn-Abholung",
+                        };
+                      }
+
                       triggerReceiptPrint({
                         receiptType: "FINDER_RECEIPT",
                         recipient: finderRecipientName,
                         amount: finderAmount,
                         reason: finderReasonText,
+                        finderRewardPayout: payout,
                       });
                     }}
                   >
@@ -884,7 +977,6 @@ export default function ItemDetail() {
               </div>
             }
             onSave={(collector) => {
-              // ✅ Entfernen nur im "eigener Abholer" Modus sinnvoll
               if (collector === null) {
                 const res = updateCollector({
                   id: item.id,
@@ -896,7 +988,6 @@ export default function ItemDetail() {
                 return res;
               }
 
-              // ✅ Abholer = Finder
               if (collectorIsFinder) {
                 if (!item.finder) {
                   const res = { ok: false, error: "Finder ist leer. Bitte zuerst Finder erfassen." };
@@ -904,7 +995,7 @@ export default function ItemDetail() {
                 }
                 const res = updateCollector({
                   id: item.id,
-                  collector: item.finder, // Repo übernimmt/normalisiert
+                  collector: item.finder,
                   actor,
                   sameAsFinder: true,
                 });
@@ -912,7 +1003,6 @@ export default function ItemDetail() {
                 return res;
               }
 
-              // ✅ Eigener Abholer
               const res = updateCollector({
                 id: item.id,
                 collector,
@@ -959,7 +1049,9 @@ export default function ItemDetail() {
           {!auditOpen ? (
             auditPreview3.length ? (
               <div>
-                <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--muted)" }}>Letzte 3 Einträge</div>
+                <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--muted)" }}>
+                  Letzte 3 Einträge
+                </div>
                 {auditPreview3.map((e) => (
                   <AuditRow key={e.id || `${e.at}-${e.type}`} entry={e} />
                 ))}
@@ -1056,6 +1148,17 @@ export default function ItemDetail() {
                       )} · ${nonEmpty(item?.collector?.phone)} · ${nonEmpty(item?.collector?.email)}`
                     : "—"}
                   {item?.collectorSameAsFinder ? " (Abholer = Finder)" : ""}
+                </div>
+
+                <div className="print-k">Finderlohn Auszahlung</div>
+                <div>
+                  {rewardPaid
+                    ? `JA – ${rewardPaidCHF} – ${fmtDateTime(rewardPaidAt)}${
+                        item?.finderRewardPayout?.ledgerId ? ` – Kasse: ${item.finderRewardPayout.ledgerId}` : ""
+                      }`
+                    : wantsReward
+                    ? "Noch nicht ausbezahlt"
+                    : "Nicht gewünscht"}
                 </div>
               </div>
             </div>

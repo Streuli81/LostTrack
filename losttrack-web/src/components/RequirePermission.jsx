@@ -1,25 +1,26 @@
 // src/components/RequirePermission.jsx
-import React from "react";
-import { Link } from "react-router-dom";
-import { getCurrentUser } from "../core/storage/userRepo";
-import { can } from "../core/auth/permissions";
+import { Navigate, useLocation } from "react-router-dom";
+import { hasPermission, isLoggedIn } from "../core/auth/auth.js";
 
 export default function RequirePermission({ action, children }) {
-  const me = getCurrentUser();
+  const loc = useLocation();
 
-  if (can(me, action)) return children;
+  if (!isLoggedIn()) {
+    const next = encodeURIComponent(loc.pathname + (loc.search || ""));
+    return <Navigate to={`/login?next=${next}`} replace />;
+  }
 
-  return (
-    <section style={{ maxWidth: 1100 }}>
-      <h2>Keine Berechtigung</h2>
-      <p style={{ opacity: 0.8 }}>
-        Aktueller Benutzer: <strong>{me?.name || "—"}</strong> ({me?.role || "—"})
-        <br />
-        Für diese Funktion brauchst du: <strong>{action}</strong>
-      </p>
-      <p>
-        <Link to="/">← zurück</Link>
-      </p>
-    </section>
-  );
+  if (!action) return children;
+
+  if (!hasPermission(action)) {
+    return (
+      <section style={{ maxWidth: 900 }}>
+        <h2>Kein Zugriff</h2>
+        <p>Dir fehlt die Berechtigung: <b>{action}</b></p>
+        <p>Bitte melde dich mit einem berechtigten Benutzer an oder kontaktiere einen Admin.</p>
+      </section>
+    );
+  }
+
+  return children;
 }

@@ -2,6 +2,7 @@
 
 import { storage } from "./storage.js";
 import { validateLostItem, VALIDATION_MODE } from "../../domain/lostItem.validators.js";
+import { getCurrentUserName } from "../auth/auth.js";
 
 /**
  * Storage Keys (versioniert) – getrennt für Revisionssicherheit
@@ -13,8 +14,8 @@ const KEY_DRAFTS = `lostItems.drafts.${STORAGE_VERSION}`; // Entwürfe / Vorscha
 const KEY_AUDIT = `lostItems.audit.${STORAGE_VERSION}`; // append-only Log
 const KEY_COUNTERS = `lostItems.counters.${STORAGE_VERSION}`; // Zähler (z.B. Quittungen, Fundnummern)
 
-// ✅ NEU: Kassenbuch (append-only)
-const KEY_CASHBOOK = `lostItems.cashbook.${STORAGE_VERSION}`; // append-only Kassenbuch (Buchungen)
+// ✅ Kassenbuch (append-only)
+const KEY_CASHBOOK = `lostItems.cashbook.${STORAGE_VERSION}`; // append-only Kassenbuch
 
 /* -------------------------------------------------
  * READ
@@ -33,7 +34,7 @@ export function listAuditLog() {
 }
 
 /**
- * ✅ NEU: Kassenbuch lesen
+ * ✅ Kassenbuch lesen (append-only)
  */
 export function listCashbookEntries() {
   const list = storage.getJson(KEY_CASHBOOK, []);
@@ -41,47 +42,39 @@ export function listCashbookEntries() {
 }
 
 /**
- * ✅ NEU: Kassenbuch Hash-Kette prüfen (Manipulation erkennbar)
- * Returns: { ok: boolean, error?: string, badIndex?: number }
+ * ✅ Kassenbuch Hash-Kette prüfen (Manipulation erkennbar)
  */
 export function verifyCashbookChain() {
   const entries = listCashbookEntries();
-
   let prevHash = "GENESIS";
+
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i] || {};
-    const expectedPrev = prevHash;
-
-    if ((e.prevHash || "") !== expectedPrev) {
+    if ((e.prevHash || "") !== prevHash) {
       return { ok: false, error: "prevHash mismatch", badIndex: i };
     }
 
-    const expectedHash = computeLedgerHash(e, expectedPrev);
-    if ((e.hash || "") !== expectedHash) {
+    const expected = computeLedgerHash(e, prevHash);
+    if ((e.hash || "") !== expected) {
       return { ok: false, error: "hash mismatch", badIndex: i };
     }
 
-    prevHash = expectedHash;
+    prevHash = expected;
   }
 
   return { ok: true };
 }
 
 /**
- * ✅ NEU: Summen im Zeitraum
- * fromIso/toIso: ISO-DateTime oder ISO-Date oder leer
- * Returns: { inCents, outCents, balanceCents, count }
+ * ✅ Summen im Zeitraum (ISO strings)
  */
 export function getCashbookTotals({ fromIso = "", toIso = "" } = {}) {
   const from = (fromIso || "").trim();
   const to = (toIso || "").trim();
 
-  const entries = listCashbookEntries();
-
   const inRange = (iso) => {
     const s = (iso || "").toString();
     if (!s) return false;
-    // lexicographic OK bei ISO
     if (from && s < from) return false;
     if (to && s > to) return false;
     return true;
@@ -91,34 +84,32 @@ export function getCashbookTotals({ fromIso = "", toIso = "" } = {}) {
   let outCents = 0;
   let count = 0;
 
-  for (const e of entries) {
+  for (const e of listCashbookEntries()) {
     if (!inRange(e.createdAt)) continue;
     const cents = Number(e.amountCents || 0) || 0;
-    if (String(e.type).toUpperCase() === "IN") inCents += cents;
-    if (String(e.type).toUpperCase() === "OUT") outCents += cents;
+    const t = String(e.type || "").toUpperCase();
+    if (t === "IN") inCents += cents;
+    if (t === "OUT") outCents += cents;
     count += 1;
   }
 
-  return {
-    inCents,
-    outCents,
-    balanceCents: inCents - outCents,
-    count,
-  };
+  return { inCents, outCents, balanceCents: inCents - outCents, count };
 }
 
 /**
- * ✅ NEU: Buchung schreiben (append-only, keine Updates/Deletes!)
+ * ✅ Buchung schreiben (append-only)
+ * actor/caseWorker werden automatisch aus Login gezogen, falls nicht übergeben.
  *
- * type: "IN" | "OUT"
- * amountCents: integer >= 0
- * item: Fundsache (Record) – mindestens { id, fundNo, item{...}, caseWorker }
- * reason: string (z.B. "Finderlohn ausbezahlt")
- * caseWorker: string (aktueller Sachbearbeiter)
- *
- * Returns: { ok: boolean, entry?: object, error?: string }
+ * amountCents: integer, z.B. CHF 12.50 => 1250
  */
-export function postCashbookEntry({ type, amountCents, item, reason, caseWorker, actor = null } = {}) {
+export function postCashbookEntry({
+  type, // "IN" | "OUT"
+  amountCents,
+  item, // LostItem (Record)
+  reason = null,
+  caseWorker = null,
+  actor = null,
+} = {}) {
   const t = String(type || "").toUpperCase();
   if (!(t === "IN" || t === "OUT")) return { ok: false, error: "Invalid type" };
 
@@ -139,41 +130,44 @@ export function postCashbookEntry({ type, amountCents, item, reason, caseWorker,
   const label = (item?.item?.manualLabel || item?.item?.predefinedKey || "").toString().trim();
   const description = (item?.item?.description || "").toString().trim();
 
+  const by = (actor ?? getCurrentUserName() ?? "").toString().trim() || null;
+  const cw =
+    (caseWorker ?? getCurrentUserName() ?? item?.caseWorker ?? "")
+      ?.toString?.()
+      ?.trim?.() || null;
+
   const entry = {
     id: nextCashbookId(now),
     createdAt: now,
     type: t,
     amountCents: cents,
 
-    // Referenzen / Kontext
     fundId: item.id,
     fundNo: fundNo || null,
     label: label || null,
     description: description || null,
 
-    caseWorker: (caseWorker ?? item?.caseWorker ?? "").toString().trim() || null,
+    caseWorker: cw,
     reason: (reason ?? "").toString().trim() || null,
 
-    // Revisionskette
     prevHash,
-    hash: "", // wird unten gesetzt
+    hash: "",
   };
 
   entry.hash = computeLedgerHash(entry, prevHash);
 
-  // append-only persist
-  const next = [...entries, entry];
-  storage.setJson(KEY_CASHBOOK, next);
+  storage.setJson(KEY_CASHBOOK, [...entries, entry]);
 
-  // audit (append-only) – wichtig für Nachvollziehbarkeit
+  // ✅ Audit dazu (append-only)
   appendAudit({
     type: "CASHBOOK_POSTED",
     fundNo: fundNo || null,
+    actor: by,
     snapshot: {
       ledgerId: entry.id,
       ledgerType: entry.type,
       amountCents: entry.amountCents,
-      actor,
+      actor: by,
       caseWorker: entry.caseWorker,
       reason: entry.reason,
       fundId: entry.fundId,
@@ -184,6 +178,101 @@ export function postCashbookEntry({ type, amountCents, item, reason, caseWorker,
   });
 
   return { ok: true, entry };
+}
+
+/**
+ * ✅ Finderlohn-Auszahlung:
+ * - schreibt OUT ins Kassenbuch
+ * - sperrt Doppelzahlung über item.finderRewardPayout.paid
+ * - markiert die Fundsache (persistiert im Record)
+ */
+export function payFinderReward({
+  id, // fundId
+  amountCents,
+  reason = "Finderlohn-Abholung",
+  actor = null,
+  caseWorker = null,
+} = {}) {
+  if (!id) return { ok: false, error: "Missing id" };
+
+  const item = getLostItemById(id);
+  if (!item) return { ok: false, error: "Not found" };
+
+  // ✅ Doppelzahlung sperren (Record-Flag)
+  if (item?.finderRewardPayout?.paid === true) {
+    return { ok: false, error: "Finderlohn wurde bereits ausbezahlt (Doppelzahlung gesperrt)." };
+  }
+
+  const res = postCashbookEntry({
+    type: "OUT",
+    amountCents,
+    item,
+    reason,
+    actor: actor ?? getCurrentUserName() ?? null,
+    caseWorker: caseWorker ?? getCurrentUserName() ?? item?.caseWorker ?? null,
+  });
+
+  if (!res.ok) return res;
+
+  // ✅ Fundsache markieren (Sperre)
+  const now = new Date().toISOString();
+  const updated = normalizeOne({
+    ...item,
+    finderRewardPayout: {
+      paid: true,
+      paidAt: now,
+      amountCents: Number(amountCents) || 0,
+      ledgerId: res.entry?.id || null,
+      reason: (reason ?? "").toString().trim() || null,
+      actor: (actor ?? getCurrentUserName() ?? "").toString().trim() || null,
+    },
+    updatedAt: now,
+  });
+
+  persistRecord(updated);
+
+  appendAudit({
+    type: "FINDER_REWARD_PAID",
+    fundNo: updated.fundNo || null,
+    snapshot: {
+      id: updated.id,
+      fundNo: updated.fundNo || null,
+      amountCents: updated.finderRewardPayout?.amountCents || 0,
+      ledgerId: updated.finderRewardPayout?.ledgerId || null,
+      actor: updated.finderRewardPayout?.actor || null,
+      at: now,
+    },
+    diff: null,
+    actor: updated.finderRewardPayout?.actor || null,
+  });
+
+  return { ok: true, entry: res.entry, item: updated };
+}
+
+/**
+ * Optional:
+ * IN-Buchung (Eigentümer zahlt Finderlohn ein / hinterlegt Betrag).
+ */
+export function receiveOwnerReward({
+  id, // fundId
+  amountCents,
+  reason = "Finderlohn-Einzahlung (Eigentümer)",
+  actor = null,
+  caseWorker = null,
+} = {}) {
+  if (!id) return { ok: false, error: "Missing id" };
+
+  const item = getLostItemById(id);
+  if (!item) return { ok: false, error: "Not found" };
+
+  return postCashbookEntry({
+    type: "IN",
+    amountCents,
+    item,
+    reason,
+    actor: actor ?? getCurrentUserName() ?? null,
+    caseWorker: caseWorker ?? getCurrentUserName() ?? item?.caseWorker ?? null,
+  });
 }
 
 /**
@@ -198,8 +287,6 @@ export function getLostItemById(id) {
 
 /**
  * ✅ Neu: nächste Fundnummer "anzeigen" (ohne Counter zu erhöhen).
- * Damit kannst du beim Start der Erfassung sofort die Nummer anzeigen,
- * ohne dass Lücken entstehen.
  */
 export function peekNextFundNo() {
   const now = new Date().toISOString();
@@ -210,9 +297,6 @@ export function peekNextFundNo() {
 /**
  * Suche in Records (AND-Verknüpfung)
  * q: { fundNo, finder, item, location, dateFrom, dateTo }
- *
- * ⚠️ Du speicherst final DD.MM.YYYY.
- * Für den Vergleich wandeln wir DD.MM.YYYY → YYYY-MM-DD um.
  */
 export function searchLostItems(q = {}) {
   const norm = (s) => (s ?? "").toString().trim().toLowerCase();
@@ -222,14 +306,10 @@ export function searchLostItems(q = {}) {
   const item = norm(q.item);
   const location = norm(q.location);
 
-  // Filterwerte kommen als YYYY-MM-DD (dein UI-Filter), das lassen wir so.
   const df = (q.dateFrom || "").trim(); // YYYY-MM-DD
   const dt = (q.dateTo || "").trim(); // YYYY-MM-DD
 
-  const toIsoDateForCompare = (storedDate) => {
-    // storedDate ist bei dir final DD.MM.YYYY (oder leer)
-    return ddmmyyyyToIso(storedDate) || "";
-  };
+  const toIsoDateForCompare = (storedDate) => ddmmyyyyToIso(storedDate) || "";
 
   const inDateRange = (storedDateStr) => {
     if (!df && !dt) return true;
@@ -241,12 +321,10 @@ export function searchLostItems(q = {}) {
   };
 
   const records = storage.getJson(KEY_RECORDS, []);
-
   const sorted = [...records].sort((a, b) => (b?.createdAt || "").localeCompare(a?.createdAt || ""));
 
   const partyFullName = (p) => {
     if (!p) return "";
-    // legacy fallback (name)
     const legacy = (p?.name ?? "").toString().trim();
     if (legacy) return legacy;
     const fn = (p?.firstName ?? "").toString().trim();
@@ -285,9 +363,6 @@ export function searchLostItems(q = {}) {
  * WRITE – STATUS
  * ------------------------------------------------- */
 
-/**
- * Statuswechsel: Record updaten + Audit schreiben
- */
 export function changeLostItemStatus({ id, newStatus, actor = null }) {
   if (!id) return { ok: false, error: "Missing id" };
   if (!newStatus) return { ok: false, error: "Missing newStatus" };
@@ -296,7 +371,6 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
   if (!current) return { ok: false, error: "Not found" };
 
   const now = new Date().toISOString();
-
   const before = slimSnapshot(current);
 
   const updated = normalizeOne({
@@ -324,6 +398,7 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
       after,
     },
     diff: diffSnapshots(before, after),
+    actor,
   });
 
   return { ok: true, item: updated };
@@ -334,9 +409,7 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
  * ------------------------------------------------- */
 
 export function updateLostItem(input, { actor = null } = {}) {
-  // ✅ tolerant einlesen → ISO fürs Validieren
   const normalizedInput = normalizeFoundAtForValidation(input);
-
   const { ok, value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.COMMIT });
 
   if (!ok) return { ok: false, errors };
@@ -346,10 +419,8 @@ export function updateLostItem(input, { actor = null } = {}) {
   if (!existing) return { ok: false, errors: { id: "Datensatz nicht gefunden." } };
 
   const now = new Date().toISOString();
-
   const before = slimSnapshot(existing);
 
-  // ✅ final speichern: DD.MM.YYYY / HH.MM
   const formattedValue = formatFoundAtDisplay(value);
 
   const updated = normalizeOne({
@@ -364,13 +435,15 @@ export function updateLostItem(input, { actor = null } = {}) {
     owner: formattedValue.owner ?? existing.owner,
     collector: formattedValue.collector ?? existing.collector,
 
-    // ✅ NEU: Flag nicht verlieren bei Edit-Mode
     collectorSameAsFinder:
       typeof formattedValue.collectorSameAsFinder === "boolean"
         ? formattedValue.collectorSameAsFinder
         : existing.collectorSameAsFinder,
 
     receipts: Array.isArray(existing.receipts) ? existing.receipts : [],
+
+    // ✅ payout-Flag immer behalten
+    finderRewardPayout: existing.finderRewardPayout ?? null,
 
     updatedAt: now,
   });
@@ -384,14 +457,9 @@ export function updateLostItem(input, { actor = null } = {}) {
   appendAudit({
     type: "ITEM_UPDATED",
     fundNo: updated.fundNo || null,
-    snapshot: {
-      id: updated.id,
-      actor,
-      at: now,
-      before,
-      after,
-    },
+    snapshot: { id: updated.id, actor, at: now, before, after },
     diff: diffSnapshots(before, after),
+    actor,
   });
 
   return { ok: true, item: updated };
@@ -401,10 +469,6 @@ export function updateLostItem(input, { actor = null } = {}) {
  * WRITE – DRAFT
  * ------------------------------------------------- */
 
-/**
- * ✅ Wichtig: Draft vergibt KEINE Fundnummer.
- * Aber Datum/Zeit wird ebenfalls final formatiert gespeichert.
- */
 export function saveDraft(input, { actor = null } = {}) {
   const normalizedInput = normalizeFoundAtForValidation(input);
   const { value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.DRAFT });
@@ -424,14 +488,9 @@ export function saveDraft(input, { actor = null } = {}) {
   appendAudit({
     type: "DRAFT_SAVED",
     fundNo: draft.fundNo || null,
-    snapshot: {
-      id: draft.id,
-      actor,
-      at: new Date().toISOString(),
-      before,
-      after,
-    },
+    snapshot: { id: draft.id, actor, at: new Date().toISOString(), before, after },
     diff: before ? diffSnapshots(before, after) : null,
+    actor,
   });
 
   return { item: draft, errors };
@@ -441,11 +500,6 @@ export function saveDraft(input, { actor = null } = {}) {
  * WRITE – COMMIT (NEU)
  * ------------------------------------------------- */
 
-/**
- * ✅ Fix: Fundnummer wird beim Commit automatisch vergeben (einmalig).
- * - Wenn input.fundNo fehlt → generieren
- * - Wenn input.fundNo bereits existiert → neu generieren (safety)
- */
 export function commitLostItem(input, { actor = null } = {}) {
   const normalizedInput = normalizeFoundAtForValidation(input);
   const { ok, value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.COMMIT });
@@ -454,7 +508,9 @@ export function commitLostItem(input, { actor = null } = {}) {
   let record = normalizeOne({ ...value });
   if (!record.id) record.id = cryptoId();
 
-  // ✅ final speichern: DD.MM.YYYY / HH.MM
+  const logged = getCurrentUserName();
+  if (!record.caseWorker) record.caseWorker = logged || record.caseWorker || null;
+
   record = formatFoundAtDisplay(record);
 
   const now = new Date().toISOString();
@@ -465,10 +521,7 @@ export function commitLostItem(input, { actor = null } = {}) {
   const needsFundNo = !inNo || fundNoExists;
 
   if (needsFundNo) {
-    record = {
-      ...record,
-      fundNo: nextFundNo(now, records), // ✅ “verbraucht” die Nummer
-    };
+    record = { ...record, fundNo: nextFundNo(now, records) };
   } else {
     record = { ...record, fundNo: normalizeFundNo(inNo) };
   }
@@ -483,13 +536,9 @@ export function commitLostItem(input, { actor = null } = {}) {
   appendAudit({
     type: "ITEM_COMMITTED",
     fundNo: record.fundNo || null,
-    snapshot: {
-      id: record.id,
-      actor,
-      at: now,
-      after,
-    },
+    snapshot: { id: record.id, actor, at: now, after },
     diff: null,
+    actor,
   });
 
   return { ok: true, item: record };
@@ -499,6 +548,12 @@ export function commitLostItem(input, { actor = null } = {}) {
  * WRITE – QUITTUNGEN (Metadaten + Audit)
  * ------------------------------------------------- */
 
+/**
+ * createReceipt:
+ * ✅ optional finderRewardPayout:
+ *   { enabled: boolean, amountCents: number, reason?: string }
+ * Wenn enabled=true, wird VOR dem Receipt automatisch payFinderReward ausgeführt.
+ */
 export function createReceipt({
   id,
   receiptType,
@@ -506,18 +561,51 @@ export function createReceipt({
   amount = null,
   actor = null,
   notes = null,
+
+  // ✅ NEU: Finderlohn-Abholung -> Kassenbuch OUT
+  finderRewardPayout = null,
 } = {}) {
   if (!id) return { ok: false, error: "Missing id" };
   if (!receiptType) return { ok: false, error: "Missing receiptType" };
 
-  const current = getLostItemById(id);
+  let current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
 
-  const now = new Date().toISOString();
+  // ✅ Wenn Finderlohn-Abholung aktiv: zuerst ins Kassenbuch schreiben (und Doppelzahlung sperren)
+  let cashbookInfo = null;
+  if (finderRewardPayout && finderRewardPayout.enabled === true) {
+    const cents = Number(finderRewardPayout.amountCents);
+    if (!Number.isFinite(cents) || cents <= 0 || Math.floor(cents) !== cents) {
+      return { ok: false, error: "Ungültiger Finderlohn-Betrag (amountCents)." };
+    }
 
+    const payoutRes = payFinderReward({
+      id,
+      amountCents: cents,
+      reason: finderRewardPayout.reason || "Finderlohn-Abholung",
+      actor: actor ?? getCurrentUserName() ?? null,
+      caseWorker: getCurrentUserName() ?? current?.caseWorker ?? null,
+    });
+
+    if (!payoutRes.ok) {
+      // Doppelzahlung / Fehler -> blockieren (damit nicht ohne Buchung gedruckt wird)
+      return payoutRes;
+    }
+
+    cashbookInfo = {
+      ledgerId: payoutRes.entry?.id || null,
+      amountCents: cents,
+      reason: finderRewardPayout.reason || "Finderlohn-Abholung",
+    };
+
+    current = payoutRes.item; // bereits persistiert, aber wir arbeiten weiter mit aktuellem Stand
+  }
+
+  const now = new Date().toISOString();
   const before = slimSnapshot(current);
 
   const receiptId = nextReceiptId(now);
+  const printedBy = (actor ?? getCurrentUserName() ?? "").toString().trim() || "System";
 
   const receipt = {
     id: receiptId,
@@ -526,7 +614,10 @@ export function createReceipt({
     amount: normalizeAmount(amount),
     notes: notes ? String(notes) : null,
     printedAt: now,
-    printedBy: (actor ?? "").toString().trim() || "M. S.",
+    printedBy,
+
+    // ✅ Referenz zur Kassenbuchbuchung (falls vorhanden)
+    cashbook: cashbookInfo,
   };
 
   const updated = normalizeOne({
@@ -542,15 +633,9 @@ export function createReceipt({
   appendAudit({
     type: "RECEIPT_PRINTED",
     fundNo: updated.fundNo || null,
-    snapshot: {
-      id: updated.id,
-      receipt,
-      actor: receipt.printedBy,
-      at: now,
-      before,
-      after,
-    },
+    snapshot: { id: updated.id, receipt, actor: printedBy, at: now, before, after },
     diff: diffSnapshots(before, after),
+    actor: printedBy,
   });
 
   return { ok: true, item: updated, receipt };
@@ -578,13 +663,7 @@ export function addInvestigationStep({ id, step, actor = null }) {
   if (!what) return { ok: false, error: "Feld 'Was' ist leer." };
   if (!at) return { ok: false, error: "Ungültiges Datum/Zeit." };
 
-  const newStep = {
-    id: cryptoId(),
-    at,
-    who,
-    what,
-  };
-
+  const newStep = { id: cryptoId(), at, who, what };
   const now = new Date().toISOString();
 
   const before = slimSnapshot(current);
@@ -604,15 +683,9 @@ export function addInvestigationStep({ id, step, actor = null }) {
   appendAudit({
     type: "INVESTIGATION_STEP_ADDED",
     fundNo: updated.fundNo || null,
-    snapshot: {
-      id: updated.id,
-      step: newStep,
-      actor,
-      at: now,
-      before,
-      after,
-    },
+    snapshot: { id: updated.id, step: newStep, actor, at: now, before, after },
     diff: diffSnapshots(before, after),
+    actor,
   });
 
   return { ok: true, item: updated, step: newStep };
@@ -629,13 +702,9 @@ export function deleteInvestigationStep({ id, stepId, actor = null }) {
   const stepDeleted = beforeSteps.find((s) => s?.id === stepId) || null;
 
   const afterSteps = beforeSteps.filter((s) => s?.id !== stepId);
-
-  if (afterSteps.length === beforeSteps.length) {
-    return { ok: false, error: "Step not found" };
-  }
+  if (afterSteps.length === beforeSteps.length) return { ok: false, error: "Step not found" };
 
   const now = new Date().toISOString();
-
   const before = slimSnapshot(current);
 
   const updated = normalizeOne({
@@ -653,16 +722,9 @@ export function deleteInvestigationStep({ id, stepId, actor = null }) {
   appendAudit({
     type: "INVESTIGATION_STEP_DELETED",
     fundNo: updated.fundNo || null,
-    snapshot: {
-      id: updated.id,
-      stepId,
-      step: stepDeleted,
-      actor,
-      at: now,
-      before,
-      after,
-    },
+    snapshot: { id: updated.id, stepId, step: stepDeleted, actor, at: now, before, after },
     diff: diffSnapshots(before, after),
+    actor,
   });
 
   return { ok: true, item: updated };
@@ -680,7 +742,6 @@ export function updateFinder({ id, finder, actor = null }) {
   if (!current) return { ok: false, error: "Not found" };
 
   const now = new Date().toISOString();
-
   const before = slimSnapshot(current);
 
   const clean = sanitizeFinder(finder);
@@ -698,15 +759,9 @@ export function updateFinder({ id, finder, actor = null }) {
   appendAudit({
     type: "FINDER_UPDATED",
     fundNo: updated.fundNo || null,
-    snapshot: {
-      id: updated.id,
-      finder: updated.finder,
-      actor,
-      at: now,
-      before,
-      after,
-    },
+    snapshot: { id: updated.id, finder: updated.finder, actor, at: now, before, after },
     diff: diffSnapshots(before, after),
+    actor,
   });
 
   appendAutoInvestigationStep(updated, actor, buildAutoText("Finder", clean));
@@ -721,7 +776,6 @@ export function updateOwner({ id, owner, actor = null }) {
   if (!current) return { ok: false, error: "Not found" };
 
   const now = new Date().toISOString();
-
   const before = slimSnapshot(current);
 
   const clean = sanitizeParty(owner);
@@ -739,15 +793,9 @@ export function updateOwner({ id, owner, actor = null }) {
   appendAudit({
     type: "OWNER_UPDATED",
     fundNo: updated.fundNo || null,
-    snapshot: {
-      id: updated.id,
-      owner: updated.owner,
-      actor,
-      at: now,
-      before,
-      after,
-    },
+    snapshot: { id: updated.id, owner: updated.owner, actor, at: now, before, after },
     diff: diffSnapshots(before, after),
+    actor,
   });
 
   appendAutoInvestigationStep(updated, actor, buildAutoText("Eigentümer", clean));
@@ -755,12 +803,6 @@ export function updateOwner({ id, owner, actor = null }) {
   return { ok: true, item: updated };
 }
 
-/**
- * ✅ Abholer aktualisieren + Flag "Abholer = Finder"
- * - sameAsFinder=true: collector wird aus finder übernommen (oder aus übergebenem collector),
- *   und collectorSameAsFinder wird true.
- * - sameAsFinder=false: collector ist eigenständig (oder null) und collectorSameAsFinder false.
- */
 export function updateCollector({ id, collector, sameAsFinder = false, actor = null }) {
   if (!id) return { ok: false, error: "Missing id" };
 
@@ -768,17 +810,13 @@ export function updateCollector({ id, collector, sameAsFinder = false, actor = n
   if (!current) return { ok: false, error: "Not found" };
 
   const now = new Date().toISOString();
-
   const before = slimSnapshot(current);
 
   let nextCollector = null;
 
   if (sameAsFinder) {
-    // Finder muss existieren, sonst macht Flag keinen Sinn
     const f = current?.finder;
     if (!f) return { ok: false, error: "Finder ist leer. Bitte zuerst Finder erfassen." };
-
-    // Wenn caller collector mitgibt (z.B. item.finder), ok; sonst übernehmen wir aus current.finder
     nextCollector = sanitizeParty(collector || f);
   } else {
     nextCollector = collector === null ? null : sanitizeParty(collector);
@@ -808,6 +846,7 @@ export function updateCollector({ id, collector, sameAsFinder = false, actor = n
       after,
     },
     diff: diffSnapshots(before, after),
+    actor,
   });
 
   if (updated.collectorSameAsFinder) {
@@ -852,22 +891,30 @@ function removeDraftById(id) {
 
 /**
  * Append-only Audit
- * Optional: event.diff = [{ path, from, to }]
+ * ✅ Wenn actor nicht übergeben, wird automatisch Login-User gesetzt
  */
 function appendAudit(event) {
   const log = storage.getJson(KEY_AUDIT, []);
+  const autoActor = (getCurrentUserName() || "System").toString().trim() || "System";
+
+  const e = { ...event };
+  if (!e.actor) e.actor = autoActor;
+
+  if (e.snapshot && typeof e.snapshot === "object" && e.snapshot !== null) {
+    if (!("actor" in e.snapshot) || !e.snapshot.actor) {
+      e.snapshot = { ...e.snapshot, actor: e.actor };
+    }
+  }
+
   log.push({
     id: cryptoId(),
     at: new Date().toISOString(),
-    ...event,
+    ...e,
   });
+
   storage.setJson(KEY_AUDIT, log);
 }
 
-/**
- * Slim snapshot für Audit.
- * (Datum/Zeit bleiben im gespeicherten Format DD.MM.YYYY / HH.MM)
- */
 function slimSnapshot(item) {
   return {
     id: item.id,
@@ -878,9 +925,10 @@ function slimSnapshot(item) {
     caseWorker: item.caseWorker,
     foundAt: item.foundAt,
     finder: item.finder,
-
-    // ✅ NEU: Flag ins Audit aufnehmen
     collectorSameAsFinder: !!item.collectorSameAsFinder,
+
+    // ✅ neu: payout snapshot
+    finderRewardPayout: item?.finderRewardPayout || null,
 
     item: {
       predefinedKey: item?.item?.predefinedKey || "",
@@ -897,7 +945,6 @@ function slimSnapshot(item) {
       : [],
     owner: item?.owner || null,
     collector: item?.collector || null,
-
     receipts: Array.isArray(item?.receipts)
       ? item.receipts.map((r) => ({
           id: r?.id,
@@ -907,6 +954,7 @@ function slimSnapshot(item) {
           printedAt: r?.printedAt,
           printedBy: r?.printedBy,
           notes: r?.notes ?? null,
+          cashbook: r?.cashbook ?? null,
         }))
       : [],
   };
@@ -920,15 +968,13 @@ function diffSnapshots(before, after) {
 
   const eq = (a, b) => {
     if (a === b) return true;
-    if (typeof a === "number" && typeof b === "number" && Number.isNaN(a) && Number.isNaN(b))
-      return true;
+    if (typeof a === "number" && typeof b === "number" && Number.isNaN(a) && Number.isNaN(b)) return true;
     return false;
   };
 
   const walk = (a, b, path) => {
     const aIsObj = isObj(a);
     const bIsObj = isObj(b);
-
     const aIsArr = Array.isArray(a);
     const bIsArr = Array.isArray(b);
 
@@ -941,9 +987,7 @@ function diffSnapshots(before, after) {
       const aa = aIsArr ? a : [];
       const bb = bIsArr ? b : [];
 
-      if (aa.length !== bb.length) {
-        changes.push({ path: `${path}.length`, from: aa.length, to: bb.length });
-      }
+      if (aa.length !== bb.length) changes.push({ path: `${path}.length`, from: aa.length, to: bb.length });
 
       const max = Math.max(aa.length, bb.length);
       for (let i = 0; i < max; i++) {
@@ -990,14 +1034,16 @@ function cryptoId() {
 function normalizeOne(item) {
   if (!item) return item;
   const out = { ...item };
+
   if (!Array.isArray(out.investigationSteps)) out.investigationSteps = [];
   if (!("owner" in out)) out.owner = null;
   if (!("collector" in out)) out.collector = null;
   if (!Array.isArray(out.receipts)) out.receipts = [];
   if (!out.foundAt || typeof out.foundAt !== "object") out.foundAt = { date: "", time: "", location: "" };
-
-  // ✅ NEU: Default für Flag
   if (!("collectorSameAsFinder" in out)) out.collectorSameAsFinder = false;
+
+  // ✅ NEU: Finderlohn-Auszahlung (Sperre)
+  if (!("finderRewardPayout" in out)) out.finderRewardPayout = null;
 
   return out;
 }
@@ -1018,13 +1064,8 @@ function toIsoOrNull(value) {
 
 /* ---------- sanitize helpers ---------- */
 
-/**
- * ✅ Neues Party-Format (wie PartyCardEditor):
- * { firstName, lastName, street, streetNo, zip, city, phone, email }
- */
 function sanitizeParty(p) {
   if (!p) return null;
-
   return {
     firstName: (p.firstName ?? "").toString().trim(),
     lastName: (p.lastName ?? "").toString().trim(),
@@ -1037,13 +1078,8 @@ function sanitizeParty(p) {
   };
 }
 
-/**
- * ✅ Neues Finder-Format + rewardRequested:
- * { firstName, lastName, street, streetNo, zip, city, phone, email, rewardRequested }
- */
 function sanitizeFinder(f) {
   if (!f) return null;
-
   return {
     firstName: (f.firstName ?? "").toString().trim(),
     lastName: (f.lastName ?? "").toString().trim(),
@@ -1060,15 +1096,10 @@ function sanitizeFinder(f) {
 /* ---------- auto investigation steps ---------- */
 
 function appendAutoInvestigationStep(item, actor, what) {
-  const who = (actor ?? "").toString().trim() || "System";
+  const who = (actor ?? "").toString().trim() || getCurrentUserName() || "System";
 
   const now = new Date().toISOString();
-  const newStep = {
-    id: cryptoId(),
-    at: now,
-    who,
-    what,
-  };
+  const newStep = { id: cryptoId(), at: now, who, what };
 
   const before = slimSnapshot(item);
 
@@ -1085,23 +1116,15 @@ function appendAutoInvestigationStep(item, actor, what) {
   appendAudit({
     type: "INVESTIGATION_STEP_ADDED_AUTO",
     fundNo: updated.fundNo || null,
-    snapshot: {
-      id: updated.id,
-      step: newStep,
-      actor: who,
-      at: now,
-      before,
-      after,
-    },
+    snapshot: { id: updated.id, step: newStep, actor: who, at: now, before, after },
     diff: diffSnapshots(before, after),
+    actor: who,
   });
 }
 
 function buildAutoText(roleLabel, p) {
-  // ✅ kompatibel: neues Format (first/last) + Legacy (name)
   const legacyName = (p?.name || "").toString().trim();
   const name = legacyName || [p?.firstName, p?.lastName].filter(Boolean).join(" ").trim();
-
   const phone = (p?.phone || "").toString().trim();
   const email = (p?.email || "").toString().trim();
 
@@ -1116,20 +1139,15 @@ function buildAutoText(roleLabel, p) {
 
 /* -------------------------------------------------
  * DATUM / ZEIT NORMALISIERUNG
- * - Eingabe tolerant
- * - Validierung bekommt ISO (YYYY-MM-DD / HH:MM)
- * - Speicherung final: DD.MM.YYYY / HH.MM
  * ------------------------------------------------- */
 
 function normalizeFoundAtForValidation(input) {
   const out = { ...input };
   const fa = { ...(out.foundAt || {}) };
 
-  // tolerant lesen
   const isoDate = normalizeDateToIsoLoose(fa.date);
   const isoTime = normalizeTimeToIsoLoose(fa.time);
 
-  // validator bekommt ISO
   if ("date" in fa) fa.date = isoDate;
   if ("time" in fa) fa.time = isoTime;
 
@@ -1141,7 +1159,6 @@ function formatFoundAtDisplay(input) {
   const out = { ...input };
   const fa = { ...(out.foundAt || {}) };
 
-  // value kann aus Validator kommen (ISO), oder bereits was anderes
   const isoDate = normalizeDateToIsoLoose(fa.date);
   const isoTime = normalizeTimeToIsoLoose(fa.time);
 
@@ -1152,14 +1169,12 @@ function formatFoundAtDisplay(input) {
   return out;
 }
 
-// akzeptiert: YYYY-MM-DD oder DD.MM.YYYY oder D.M.YY oder D/M/YYYY etc.
 function normalizeDateToIsoLoose(v) {
   const s = (v ?? "").toString().trim();
   if (!s) return s;
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
-  // DD.MM.YYYY / D.M.YY / mit .-/ gemischt
   const m = s.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})$/);
   if (!m) return s;
 
@@ -1169,59 +1184,43 @@ function normalizeDateToIsoLoose(v) {
 
   if (!Number.isFinite(dd) || !Number.isFinite(mm) || !Number.isFinite(yy)) return s;
 
-  if (yy < 100) yy = 2000 + yy; // CH-Usecase (26 -> 2026)
+  if (yy < 100) yy = 2000 + yy;
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return s;
 
-  return `${String(yy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(
-    2,
-    "0"
-  )}`;
+  return `${String(yy).padStart(4, "0")}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
 }
 
-// akzeptiert: HH:MM, HH.MM, "1450", "930", "9", "14.5"
 function normalizeTimeToIsoLoose(v) {
   const s0 = (v ?? "").toString().trim();
   if (!s0) return s0;
 
-  // HH:MM
   if (/^\d{1,2}:\d{2}$/.test(s0)) {
     const [h, m] = s0.split(":").map((x) => Number(x));
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-    }
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
     return s0;
   }
 
-  // HH.MM (mit Punkt)
   if (/^\d{1,2}\.\d{1,2}$/.test(s0)) {
     const [hS, mS] = s0.split(".");
     const h = Number(hS);
     const m = Number(mS);
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-    }
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
     return s0;
   }
 
-  // "14.5" -> 14:05
   const dot = s0.replace(",", ".").match(/^(\d{1,2})\.(\d{1,2})$/);
   if (dot) {
     const h = Number(dot[1]);
     const m = Number(dot[2]);
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-    }
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
     return s0;
   }
 
-  // "1450" / "930" / "9"
   if (/^\d{1,4}$/.test(s0)) {
     const n = s0.padStart(4, "0");
     const h = Number(n.slice(0, 2));
     const m = Number(n.slice(2, 4));
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-    }
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
   }
 
   return s0;
@@ -1237,18 +1236,15 @@ function isoToDdMmYyyy(iso) {
 function ddmmyyyyToIso(ddmmyyyy) {
   const s = (ddmmyyyy ?? "").toString().trim();
   if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s; // falls doch mal ISO
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
   if (!m) return null;
-  const dd = m[1];
-  const mm = m[2];
-  const yy = m[3];
-  return `${yy}-${mm}-${dd}`;
+  return `${m[3]}-${m[2]}-${m[1]}`;
 }
 
 function isoTimeToHhDotMm(isoTime) {
   const s = (isoTime ?? "").toString().trim();
-  if (!/^\d{2}:\d{2}$/.test(s) && !/^\d{1,2}:\d{2}$/.test(s)) return null;
+  if (!/^\d{1,2}:\d{2}$/.test(s)) return null;
   const [hS, mS] = s.split(":");
   const h = String(Number(hS)).padStart(2, "0");
   const m = String(Number(mS)).padStart(2, "0");
@@ -1257,9 +1253,6 @@ function isoTimeToHhDotMm(isoTime) {
 
 /* -------------------------------------------------
  * NUMMERIERUNG
- * - Fundnummer: YYYY-00001 (pro Jahr neuer Zähler)
- * - Quittungen: Q-YYYY-NNNN
- * - Kasse:      K-YYYY-NNNNN
  * ------------------------------------------------- */
 
 function normalizeAmount(amount) {
@@ -1291,13 +1284,9 @@ function nextReceiptId(isoNow) {
   counters[key] = next;
   setCounters(counters);
 
-  const nnnn = String(next).padStart(4, "0");
-  return `Q-${year}-${nnnn}`;
+  return `Q-${year}-${String(next).padStart(4, "0")}`;
 }
 
-/**
- * ✅ NEU: Kassenbuch-ID
- */
 function nextCashbookId(isoNow) {
   const year = String(isoNow).slice(0, 4);
   const key = `cashbook:${year}`;
@@ -1309,19 +1298,13 @@ function nextCashbookId(isoNow) {
   counters[key] = next;
   setCounters(counters);
 
-  const nnnnn = String(next).padStart(5, "0");
-  return `K-${year}-${nnnnn}`;
+  return `K-${year}-${String(next).padStart(4, "0")}`;
 }
 
-/**
- * ✅ Peek: nächste Fundnummer (ohne Counter++)
- */
 function peekFundNo(isoNow, existingRecords = []) {
   const year = String(isoNow).slice(0, 4);
-  const key = `fundNo:${year}`;
-
   const counters = getCounters();
-  let n = Number(counters[key] || 0);
+  let n = Number(counters[`fundNo:${year}`] || 0);
 
   while (true) {
     const candidate = `${year}-${String(n + 1).padStart(5, "0")}`;
@@ -1331,11 +1314,6 @@ function peekFundNo(isoNow, existingRecords = []) {
   }
 }
 
-/**
- * ✅ Fundnummern-Generator (verbraucht Counter)
- * - pro Jahr neuer Zähler
- * - safety: prüft existierende Records
- */
 function nextFundNo(isoNow, existingRecords = []) {
   const year = String(isoNow).slice(0, 4);
   const key = `fundNo:${year}`;
@@ -1346,7 +1324,6 @@ function nextFundNo(isoNow, existingRecords = []) {
   while (true) {
     n += 1;
     const fundNo = `${year}-${String(n).padStart(5, "0")}`;
-
     const exists = existingRecords.some((r) => (r?.fundNo ?? "").toString().trim() === fundNo);
     if (!exists) {
       counters[key] = n;
@@ -1356,12 +1333,6 @@ function nextFundNo(isoNow, existingRecords = []) {
   }
 }
 
-/**
- * Normalisiert Fundnummern-Strings, wenn jemand sie manuell schreibt.
- * Akzeptiert:
- * - "2026-1" -> "2026-00001"
- * - "2026-00001" bleibt
- */
 function normalizeFundNo(input) {
   const s = (input ?? "").toString().trim();
   if (!s) return s;
@@ -1377,40 +1348,34 @@ function normalizeFundNo(input) {
 }
 
 /* -------------------------------------------------
- * CASHBOOK – Hashing (tamper-evident)
- * Hinweis: kein Kryptobeweis, aber Manipulationen werden erkennbar.
+ * KASSENBUCH – Hash-Kette
  * ------------------------------------------------- */
 
-function computeLedgerHash(entry, prevHash) {
-  const payload = stableLedgerPayload(entry, prevHash);
-  return fnv1a32Hex(payload);
-}
-
-function stableLedgerPayload(e, prevHash) {
-  // Wichtig: deterministisch & ohne "hash" selbst
-  const obj = {
-    id: e?.id || "",
-    createdAt: e?.createdAt || "",
-    type: e?.type || "",
-    amountCents: Number(e?.amountCents || 0) || 0,
-    fundId: e?.fundId || "",
-    fundNo: e?.fundNo || "",
-    label: e?.label || "",
-    description: e?.description || "",
-    caseWorker: e?.caseWorker || "",
-    reason: e?.reason || "",
-    prevHash: prevHash || "",
-  };
-  return JSON.stringify(obj);
-}
-
-// FNV-1a 32-bit (schnell, synchron, ausreichend für "tamper-evident" im UI-Kontext)
 function fnv1a32Hex(str) {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);
-    // h *= 16777619 (mit bit-ops)
     h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
   }
   return ("00000000" + h.toString(16)).slice(-8);
+}
+
+function computeLedgerHash(entry, prevHash) {
+  const payload = {
+    prevHash: prevHash || "GENESIS",
+    id: entry?.id || "",
+    createdAt: entry?.createdAt || "",
+    type: entry?.type || "",
+    amountCents: Number(entry?.amountCents || 0) || 0,
+
+    fundId: entry?.fundId || "",
+    fundNo: entry?.fundNo || "",
+    label: entry?.label || "",
+    description: entry?.description || "",
+
+    caseWorker: entry?.caseWorker || "",
+    reason: entry?.reason || "",
+  };
+
+  return fnv1a32Hex(JSON.stringify(payload));
 }
