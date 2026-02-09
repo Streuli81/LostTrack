@@ -13,6 +13,9 @@ const KEY_DRAFTS = `lostItems.drafts.${STORAGE_VERSION}`; // Entwürfe / Vorscha
 const KEY_AUDIT = `lostItems.audit.${STORAGE_VERSION}`; // append-only Log
 const KEY_COUNTERS = `lostItems.counters.${STORAGE_VERSION}`; // Zähler (z.B. Quittungen, Fundnummern)
 
+// ✅ NEU: Kassenbuch (append-only)
+const KEY_CASHBOOK = `lostItems.cashbook.${STORAGE_VERSION}`; // append-only Kassenbuch (Buchungen)
+
 /* -------------------------------------------------
  * READ
  * ------------------------------------------------- */
@@ -27,6 +30,160 @@ export function listDrafts() {
 
 export function listAuditLog() {
   return storage.getJson(KEY_AUDIT, []);
+}
+
+/**
+ * ✅ NEU: Kassenbuch lesen
+ */
+export function listCashbookEntries() {
+  const list = storage.getJson(KEY_CASHBOOK, []);
+  return Array.isArray(list) ? list : [];
+}
+
+/**
+ * ✅ NEU: Kassenbuch Hash-Kette prüfen (Manipulation erkennbar)
+ * Returns: { ok: boolean, error?: string, badIndex?: number }
+ */
+export function verifyCashbookChain() {
+  const entries = listCashbookEntries();
+
+  let prevHash = "GENESIS";
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i] || {};
+    const expectedPrev = prevHash;
+
+    if ((e.prevHash || "") !== expectedPrev) {
+      return { ok: false, error: "prevHash mismatch", badIndex: i };
+    }
+
+    const expectedHash = computeLedgerHash(e, expectedPrev);
+    if ((e.hash || "") !== expectedHash) {
+      return { ok: false, error: "hash mismatch", badIndex: i };
+    }
+
+    prevHash = expectedHash;
+  }
+
+  return { ok: true };
+}
+
+/**
+ * ✅ NEU: Summen im Zeitraum
+ * fromIso/toIso: ISO-DateTime oder ISO-Date oder leer
+ * Returns: { inCents, outCents, balanceCents, count }
+ */
+export function getCashbookTotals({ fromIso = "", toIso = "" } = {}) {
+  const from = (fromIso || "").trim();
+  const to = (toIso || "").trim();
+
+  const entries = listCashbookEntries();
+
+  const inRange = (iso) => {
+    const s = (iso || "").toString();
+    if (!s) return false;
+    // lexicographic OK bei ISO
+    if (from && s < from) return false;
+    if (to && s > to) return false;
+    return true;
+  };
+
+  let inCents = 0;
+  let outCents = 0;
+  let count = 0;
+
+  for (const e of entries) {
+    if (!inRange(e.createdAt)) continue;
+    const cents = Number(e.amountCents || 0) || 0;
+    if (String(e.type).toUpperCase() === "IN") inCents += cents;
+    if (String(e.type).toUpperCase() === "OUT") outCents += cents;
+    count += 1;
+  }
+
+  return {
+    inCents,
+    outCents,
+    balanceCents: inCents - outCents,
+    count,
+  };
+}
+
+/**
+ * ✅ NEU: Buchung schreiben (append-only, keine Updates/Deletes!)
+ *
+ * type: "IN" | "OUT"
+ * amountCents: integer >= 0
+ * item: Fundsache (Record) – mindestens { id, fundNo, item{...}, caseWorker }
+ * reason: string (z.B. "Finderlohn ausbezahlt")
+ * caseWorker: string (aktueller Sachbearbeiter)
+ *
+ * Returns: { ok: boolean, entry?: object, error?: string }
+ */
+export function postCashbookEntry({ type, amountCents, item, reason, caseWorker, actor = null } = {}) {
+  const t = String(type || "").toUpperCase();
+  if (!(t === "IN" || t === "OUT")) return { ok: false, error: "Invalid type" };
+
+  const cents = Number(amountCents);
+  if (!Number.isFinite(cents) || cents < 0 || Math.floor(cents) !== cents) {
+    return { ok: false, error: "Invalid amountCents" };
+  }
+
+  if (!item?.id) return { ok: false, error: "Missing item.id" };
+
+  const now = new Date().toISOString();
+
+  const entries = listCashbookEntries();
+  const last = entries.length ? entries[entries.length - 1] : null;
+  const prevHash = last?.hash || "GENESIS";
+
+  const fundNo = (item?.fundNo || "").toString().trim();
+  const label = (item?.item?.manualLabel || item?.item?.predefinedKey || "").toString().trim();
+  const description = (item?.item?.description || "").toString().trim();
+
+  const entry = {
+    id: nextCashbookId(now),
+    createdAt: now,
+    type: t,
+    amountCents: cents,
+
+    // Referenzen / Kontext
+    fundId: item.id,
+    fundNo: fundNo || null,
+    label: label || null,
+    description: description || null,
+
+    caseWorker: (caseWorker ?? item?.caseWorker ?? "").toString().trim() || null,
+    reason: (reason ?? "").toString().trim() || null,
+
+    // Revisionskette
+    prevHash,
+    hash: "", // wird unten gesetzt
+  };
+
+  entry.hash = computeLedgerHash(entry, prevHash);
+
+  // append-only persist
+  const next = [...entries, entry];
+  storage.setJson(KEY_CASHBOOK, next);
+
+  // audit (append-only) – wichtig für Nachvollziehbarkeit
+  appendAudit({
+    type: "CASHBOOK_POSTED",
+    fundNo: fundNo || null,
+    snapshot: {
+      ledgerId: entry.id,
+      ledgerType: entry.type,
+      amountCents: entry.amountCents,
+      actor,
+      caseWorker: entry.caseWorker,
+      reason: entry.reason,
+      fundId: entry.fundId,
+      fundNo: entry.fundNo,
+      at: now,
+    },
+    diff: null,
+  });
+
+  return { ok: true, entry };
 }
 
 /**
@@ -1102,6 +1259,7 @@ function isoTimeToHhDotMm(isoTime) {
  * NUMMERIERUNG
  * - Fundnummer: YYYY-00001 (pro Jahr neuer Zähler)
  * - Quittungen: Q-YYYY-NNNN
+ * - Kasse:      K-YYYY-NNNNN
  * ------------------------------------------------- */
 
 function normalizeAmount(amount) {
@@ -1135,6 +1293,24 @@ function nextReceiptId(isoNow) {
 
   const nnnn = String(next).padStart(4, "0");
   return `Q-${year}-${nnnn}`;
+}
+
+/**
+ * ✅ NEU: Kassenbuch-ID
+ */
+function nextCashbookId(isoNow) {
+  const year = String(isoNow).slice(0, 4);
+  const key = `cashbook:${year}`;
+
+  const counters = getCounters();
+  const current = Number(counters[key] || 0);
+  const next = current + 1;
+
+  counters[key] = next;
+  setCounters(counters);
+
+  const nnnnn = String(next).padStart(5, "0");
+  return `K-${year}-${nnnnn}`;
 }
 
 /**
@@ -1198,4 +1374,43 @@ function normalizeFundNo(input) {
   if (!Number.isFinite(n) || n <= 0) return s;
 
   return `${year}-${String(n).padStart(5, "0")}`;
+}
+
+/* -------------------------------------------------
+ * CASHBOOK – Hashing (tamper-evident)
+ * Hinweis: kein Kryptobeweis, aber Manipulationen werden erkennbar.
+ * ------------------------------------------------- */
+
+function computeLedgerHash(entry, prevHash) {
+  const payload = stableLedgerPayload(entry, prevHash);
+  return fnv1a32Hex(payload);
+}
+
+function stableLedgerPayload(e, prevHash) {
+  // Wichtig: deterministisch & ohne "hash" selbst
+  const obj = {
+    id: e?.id || "",
+    createdAt: e?.createdAt || "",
+    type: e?.type || "",
+    amountCents: Number(e?.amountCents || 0) || 0,
+    fundId: e?.fundId || "",
+    fundNo: e?.fundNo || "",
+    label: e?.label || "",
+    description: e?.description || "",
+    caseWorker: e?.caseWorker || "",
+    reason: e?.reason || "",
+    prevHash: prevHash || "",
+  };
+  return JSON.stringify(obj);
+}
+
+// FNV-1a 32-bit (schnell, synchron, ausreichend für "tamper-evident" im UI-Kontext)
+function fnv1a32Hex(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    // h *= 16777619 (mit bit-ops)
+    h = (h + (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24)) >>> 0;
+  }
+  return ("00000000" + h.toString(16)).slice(-8);
 }

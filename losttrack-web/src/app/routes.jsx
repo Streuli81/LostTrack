@@ -1,4 +1,6 @@
+// src/app/routes.jsx
 import { createBrowserRouter, Navigate } from "react-router-dom";
+
 import Layout from "../components/Layout.jsx";
 import Dashboard from "../pages/Dashboard.jsx";
 import NewItem from "../pages/NewItem.jsx";
@@ -7,12 +9,23 @@ import Settings from "../pages/Settings.jsx";
 import SettingsHome from "../pages/SettingsHome.jsx";
 import ItemDetail from "../pages/ItemDetail.jsx";
 import Users from "../pages/Users.jsx";
+
 import RequirePermission from "../components/RequirePermission.jsx";
+import RequireAuth from "../components/RequireAuth.jsx";
+import Login from "../pages/Login.jsx";
 
 export const router = createBrowserRouter([
+  // ✅ öffentlich
+  { path: "/login", element: <Login /> },
+
+  // ✅ geschützt
   {
     path: "/",
-    element: <Layout />,
+    element: (
+      <RequireAuth>
+        <Layout />
+      </RequireAuth>
+    ),
     children: [
       { index: true, element: <Dashboard /> },
 
@@ -37,7 +50,6 @@ export const router = createBrowserRouter([
       { path: "suche", element: <Search /> },
       { path: "items/:id", element: <ItemDetail /> },
 
-      // ✅ Einstellungen als Bereich mit Unterseiten
       {
         path: "einstellungen",
         element: <Settings />,
@@ -54,7 +66,6 @@ export const router = createBrowserRouter([
         ],
       },
 
-      // ✅ alte URL bleibt als Redirect
       { path: "benutzer", element: <Navigate to="/einstellungen/benutzer" replace /> },
     ],
   },
