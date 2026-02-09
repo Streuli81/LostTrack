@@ -1,3 +1,4 @@
+// src/components/SideNav.jsx (oder wo diese Datei liegt)
 import { NavLink } from "react-router-dom";
 import { getCurrentUser } from "../core/storage/userRepo";
 
@@ -39,6 +40,11 @@ export default function SideNav() {
         </NavLink>
         <NavLink to="/suche" style={linkStyle}>
           Suche
+        </NavLink>
+
+        {/* ✅ NEU */}
+        <NavLink to="/kassenbuch" style={linkStyle}>
+          Kassenbuch
         </NavLink>
 
         {/* ✅ Einstellungen bleibt, Tabs kommen im Settings-Screen */}

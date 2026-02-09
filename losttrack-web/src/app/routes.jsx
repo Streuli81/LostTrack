@@ -10,6 +10,9 @@ import SettingsHome from "../pages/SettingsHome.jsx";
 import ItemDetail from "../pages/ItemDetail.jsx";
 import Users from "../pages/Users.jsx";
 
+// ✅ NEU
+import Cashbook from "../pages/Cashbook.jsx";
+
 import RequirePermission from "../components/RequirePermission.jsx";
 import RequireAuth from "../components/RequireAuth.jsx";
 import Login from "../pages/Login.jsx";
@@ -49,6 +52,16 @@ export const router = createBrowserRouter([
 
       { path: "suche", element: <Search /> },
       { path: "items/:id", element: <ItemDetail /> },
+
+      // ✅ NEU: Kassenbuch
+      {
+        path: "kassenbuch",
+        element: (
+          <RequirePermission action="CASHBOOK_VIEW">
+            <Cashbook />
+          </RequirePermission>
+        ),
+      },
 
       {
         path: "einstellungen",

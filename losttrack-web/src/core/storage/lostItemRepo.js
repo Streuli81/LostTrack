@@ -98,7 +98,6 @@ export function getCashbookTotals({ fromIso = "", toIso = "" } = {}) {
 
 /**
  * ✅ Buchung schreiben (append-only)
- * actor/caseWorker werden automatisch aus Login gezogen, falls nicht übergeben.
  *
  * amountCents: integer, z.B. CHF 12.50 => 1250
  */
@@ -181,15 +180,13 @@ export function postCashbookEntry({
 }
 
 /**
- * ✅ Finderlohn-Auszahlung:
- * - schreibt OUT ins Kassenbuch
- * - sperrt Doppelzahlung über item.finderRewardPayout.paid
- * - markiert die Fundsache (persistiert im Record)
+ * OUT-Buchung im Kassenbuch (Finderlohn-Auszahlung).
+ * (Falls du das später wieder nutzt: bleibt drin.)
  */
 export function payFinderReward({
   id, // fundId
   amountCents,
-  reason = "Finderlohn-Abholung",
+  reason = "Finderlohn-Auszahlung",
   actor = null,
   caseWorker = null,
 } = {}) {
@@ -198,12 +195,7 @@ export function payFinderReward({
   const item = getLostItemById(id);
   if (!item) return { ok: false, error: "Not found" };
 
-  // ✅ Doppelzahlung sperren (Record-Flag)
-  if (item?.finderRewardPayout?.paid === true) {
-    return { ok: false, error: "Finderlohn wurde bereits ausbezahlt (Doppelzahlung gesperrt)." };
-  }
-
-  const res = postCashbookEntry({
+  return postCashbookEntry({
     type: "OUT",
     amountCents,
     item,
@@ -211,47 +203,12 @@ export function payFinderReward({
     actor: actor ?? getCurrentUserName() ?? null,
     caseWorker: caseWorker ?? getCurrentUserName() ?? item?.caseWorker ?? null,
   });
-
-  if (!res.ok) return res;
-
-  // ✅ Fundsache markieren (Sperre)
-  const now = new Date().toISOString();
-  const updated = normalizeOne({
-    ...item,
-    finderRewardPayout: {
-      paid: true,
-      paidAt: now,
-      amountCents: Number(amountCents) || 0,
-      ledgerId: res.entry?.id || null,
-      reason: (reason ?? "").toString().trim() || null,
-      actor: (actor ?? getCurrentUserName() ?? "").toString().trim() || null,
-    },
-    updatedAt: now,
-  });
-
-  persistRecord(updated);
-
-  appendAudit({
-    type: "FINDER_REWARD_PAID",
-    fundNo: updated.fundNo || null,
-    snapshot: {
-      id: updated.id,
-      fundNo: updated.fundNo || null,
-      amountCents: updated.finderRewardPayout?.amountCents || 0,
-      ledgerId: updated.finderRewardPayout?.ledgerId || null,
-      actor: updated.finderRewardPayout?.actor || null,
-      at: now,
-    },
-    diff: null,
-    actor: updated.finderRewardPayout?.actor || null,
-  });
-
-  return { ok: true, entry: res.entry, item: updated };
 }
 
 /**
- * Optional:
- * IN-Buchung (Eigentümer zahlt Finderlohn ein / hinterlegt Betrag).
+ * ✅ NEU/ERWEITERT:
+ * IN-Buchung (Eigentümer zahlt Finderlohn ein / übergibt Betrag).
+ * Sperrt Doppelbuchungen über item.finderRewardDeposit.received.
  */
 export function receiveOwnerReward({
   id, // fundId
@@ -262,17 +219,78 @@ export function receiveOwnerReward({
 } = {}) {
   if (!id) return { ok: false, error: "Missing id" };
 
-  const item = getLostItemById(id);
-  if (!item) return { ok: false, error: "Not found" };
+  const current = getLostItemById(id);
+  if (!current) return { ok: false, error: "Not found" };
 
-  return postCashbookEntry({
+  const cents = Number(amountCents);
+  if (!Number.isFinite(cents) || cents <= 0 || Math.floor(cents) !== cents) {
+    return { ok: false, error: "Invalid amountCents" };
+  }
+
+  // ✅ Doppel-Einnahme verhindern
+  if (current?.finderRewardDeposit?.received) {
+    const existing = current?.finderRewardDeposit?.ledgerId ? ` (Kasse: ${current.finderRewardDeposit.ledgerId})` : "";
+    return { ok: false, error: `Finderlohn wurde bereits eingenommen${existing}.` };
+  }
+
+  const by = (actor ?? getCurrentUserName() ?? "").toString().trim() || null;
+  const cw =
+    (caseWorker ?? getCurrentUserName() ?? current?.caseWorker ?? "")
+      ?.toString?.()
+      ?.trim?.() || null;
+
+  // 1) Kassenbuch buchen
+  const posted = postCashbookEntry({
     type: "IN",
-    amountCents,
-    item,
+    amountCents: cents,
+    item: current,
     reason,
-    actor: actor ?? getCurrentUserName() ?? null,
-    caseWorker: caseWorker ?? getCurrentUserName() ?? item?.caseWorker ?? null,
+    actor: by,
+    caseWorker: cw,
   });
+
+  if (!posted?.ok) return posted;
+
+  const now = new Date().toISOString();
+
+  // 2) Sperr-Info in Fundsache speichern (damit wir nicht doppelt buchen)
+  const before = slimSnapshot(current);
+
+  const updated = normalizeOne({
+    ...current,
+    finderRewardDeposit: {
+      received: true,
+      receivedAt: now,
+      amountCents: cents,
+      actor: by,
+      ledgerId: posted?.entry?.id || null,
+      reason: (reason ?? "").toString().trim() || null,
+    },
+    updatedAt: now,
+  });
+
+  const after = slimSnapshot(updated);
+  persistRecord(updated);
+
+  // 3) Audit
+  appendAudit({
+    type: "FINDER_REWARD_DEPOSIT_RECEIVED",
+    fundNo: updated.fundNo || null,
+    snapshot: {
+      id: updated.id,
+      actor: by,
+      at: now,
+      amountCents: cents,
+      ledgerId: posted?.entry?.id || null,
+      reason: updated?.finderRewardDeposit?.reason || null,
+      before,
+      after,
+    },
+    diff: diffSnapshots(before, after),
+    actor: by,
+  });
+
+  return { ok: true, item: updated, entry: posted.entry };
 }
 
 /**
@@ -296,7 +314,6 @@ export function peekNextFundNo() {
 
 /**
  * Suche in Records (AND-Verknüpfung)
- * q: { fundNo, finder, item, location, dateFrom, dateTo }
  */
 export function searchLostItems(q = {}) {
   const norm = (s) => (s ?? "").toString().trim().toLowerCase();
@@ -313,7 +330,7 @@ export function searchLostItems(q = {}) {
 
   const inDateRange = (storedDateStr) => {
     if (!df && !dt) return true;
-    const iso = toIsoDateForCompare(storedDateStr); // YYYY-MM-DD
+    const iso = toIsoDateForCompare(storedDateStr);
     if (!iso) return false;
     if (df && iso < df) return false;
     if (dt && iso > dt) return false;
@@ -426,7 +443,7 @@ export function updateLostItem(input, { actor = null } = {}) {
   const updated = normalizeOne({
     ...existing,
     ...formattedValue,
-    fundNo: existing.fundNo, // ❗ Fundnummer bleibt unverändert
+    fundNo: existing.fundNo,
 
     investigationSteps: Array.isArray(formattedValue.investigationSteps)
       ? formattedValue.investigationSteps
@@ -442,8 +459,8 @@ export function updateLostItem(input, { actor = null } = {}) {
 
     receipts: Array.isArray(existing.receipts) ? existing.receipts : [],
 
-    // ✅ payout-Flag immer behalten
-    finderRewardPayout: existing.finderRewardPayout ?? null,
+    // ✅ neue Felder nicht verlieren
+    finderRewardDeposit: existing.finderRewardDeposit || null,
 
     updatedAt: now,
   });
@@ -548,12 +565,6 @@ export function commitLostItem(input, { actor = null } = {}) {
  * WRITE – QUITTUNGEN (Metadaten + Audit)
  * ------------------------------------------------- */
 
-/**
- * createReceipt:
- * ✅ optional finderRewardPayout:
- *   { enabled: boolean, amountCents: number, reason?: string }
- * Wenn enabled=true, wird VOR dem Receipt automatisch payFinderReward ausgeführt.
- */
 export function createReceipt({
   id,
   receiptType,
@@ -561,45 +572,12 @@ export function createReceipt({
   amount = null,
   actor = null,
   notes = null,
-
-  // ✅ NEU: Finderlohn-Abholung -> Kassenbuch OUT
-  finderRewardPayout = null,
 } = {}) {
   if (!id) return { ok: false, error: "Missing id" };
   if (!receiptType) return { ok: false, error: "Missing receiptType" };
 
-  let current = getLostItemById(id);
+  const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
-
-  // ✅ Wenn Finderlohn-Abholung aktiv: zuerst ins Kassenbuch schreiben (und Doppelzahlung sperren)
-  let cashbookInfo = null;
-  if (finderRewardPayout && finderRewardPayout.enabled === true) {
-    const cents = Number(finderRewardPayout.amountCents);
-    if (!Number.isFinite(cents) || cents <= 0 || Math.floor(cents) !== cents) {
-      return { ok: false, error: "Ungültiger Finderlohn-Betrag (amountCents)." };
-    }
-
-    const payoutRes = payFinderReward({
-      id,
-      amountCents: cents,
-      reason: finderRewardPayout.reason || "Finderlohn-Abholung",
-      actor: actor ?? getCurrentUserName() ?? null,
-      caseWorker: getCurrentUserName() ?? current?.caseWorker ?? null,
-    });
-
-    if (!payoutRes.ok) {
-      // Doppelzahlung / Fehler -> blockieren (damit nicht ohne Buchung gedruckt wird)
-      return payoutRes;
-    }
-
-    cashbookInfo = {
-      ledgerId: payoutRes.entry?.id || null,
-      amountCents: cents,
-      reason: finderRewardPayout.reason || "Finderlohn-Abholung",
-    };
-
-    current = payoutRes.item; // bereits persistiert, aber wir arbeiten weiter mit aktuellem Stand
-  }
 
   const now = new Date().toISOString();
   const before = slimSnapshot(current);
@@ -615,14 +593,60 @@ export function createReceipt({
     notes: notes ? String(notes) : null,
     printedAt: now,
     printedBy,
-
-    // ✅ Referenz zur Kassenbuchbuchung (falls vorhanden)
-    cashbook: cashbookInfo,
   };
+
+  // ✅ NEU: Wenn OWNER_RECEIPT mit Betrag (Finderlohn-Einnahme) => automatisch IN ins Kassenbuch
+  // Bedingung: Finderlohn ist gewünscht und Betrag > 0
+  let depositInfo = null;
+
+  if (
+    receipt.type === "OWNER_RECEIPT" &&
+    receipt.amount !== null &&
+    Number(receipt.amount) > 0 &&
+    !!current?.finder?.rewardRequested
+  ) {
+    const cents = chfToCents(receipt.amount);
+    if (!cents || cents <= 0) return { ok: false, error: "Ungültiger Betrag für Finderlohn." };
+
+    // Doppel-Einnahme verhindern (harte Sperre)
+    if (current?.finderRewardDeposit?.received) {
+      const existing = current?.finderRewardDeposit?.ledgerId ? ` (Kasse: ${current.finderRewardDeposit.ledgerId})` : "";
+      return { ok: false, error: `Finderlohn wurde bereits eingenommen${existing}.` };
+    }
+
+    const cw =
+      (getCurrentUserName() ?? current?.caseWorker ?? "")
+        ?.toString?.()
+        ?.trim?.() || null;
+
+    const posted = postCashbookEntry({
+      type: "IN",
+      amountCents: cents,
+      item: current,
+      reason: receipt.notes || "Finderlohn-Einzahlung (Eigentümer)",
+      actor: printedBy,
+      caseWorker: cw,
+    });
+
+    if (!posted?.ok) return { ok: false, error: posted?.error || "Kassenbuch-Buchung fehlgeschlagen." };
+
+    depositInfo = {
+      received: true,
+      receivedAt: now,
+      amountCents: cents,
+      actor: printedBy,
+      ledgerId: posted?.entry?.id || null,
+      reason: receipt.notes || "Finderlohn-Einzahlung (Eigentümer)",
+    };
+  }
 
   const updated = normalizeOne({
     ...current,
     receipts: [...(current.receipts || []), receipt],
+
+    // ✅ wenn Einzahlung erfolgt: Sperrinfo speichern
+    finderRewardDeposit: depositInfo ? depositInfo : current.finderRewardDeposit || null,
+
     updatedAt: now,
   });
 
@@ -637,6 +661,24 @@ export function createReceipt({
     diff: diffSnapshots(before, after),
     actor: printedBy,
   });
+
+  // ✅ separates Audit (optional aber sehr hilfreich)
+  if (depositInfo) {
+    appendAudit({
+      type: "FINDER_REWARD_DEPOSIT_RECEIVED",
+      fundNo: updated.fundNo || null,
+      snapshot: {
+        id: updated.id,
+        actor: printedBy,
+        at: now,
+        amountCents: depositInfo.amountCents,
+        ledgerId: depositInfo.ledgerId,
+        reason: depositInfo.reason,
+      },
+      diff: null,
+      actor: printedBy,
+    });
+  }
 
   return { ok: true, item: updated, receipt };
 }
@@ -926,10 +968,6 @@ function slimSnapshot(item) {
     foundAt: item.foundAt,
     finder: item.finder,
     collectorSameAsFinder: !!item.collectorSameAsFinder,
-
-    // ✅ neu: payout snapshot
-    finderRewardPayout: item?.finderRewardPayout || null,
-
     item: {
       predefinedKey: item?.item?.predefinedKey || "",
       manualLabel: item?.item?.manualLabel || "",
@@ -954,9 +992,11 @@ function slimSnapshot(item) {
           printedAt: r?.printedAt,
           printedBy: r?.printedBy,
           notes: r?.notes ?? null,
-          cashbook: r?.cashbook ?? null,
         }))
       : [],
+
+    // ✅ NEU: Einnahme-Sperre & Nachvollzug
+    finderRewardDeposit: item?.finderRewardDeposit || null,
   };
 }
 
@@ -1042,8 +1082,8 @@ function normalizeOne(item) {
   if (!out.foundAt || typeof out.foundAt !== "object") out.foundAt = { date: "", time: "", location: "" };
   if (!("collectorSameAsFinder" in out)) out.collectorSameAsFinder = false;
 
-  // ✅ NEU: Finderlohn-Auszahlung (Sperre)
-  if (!("finderRewardPayout" in out)) out.finderRewardPayout = null;
+  // ✅ NEU: default Feld für Einzahlung (Sperre gegen Doppelbuchung)
+  if (!("finderRewardDeposit" in out)) out.finderRewardDeposit = null;
 
   return out;
 }
@@ -1262,6 +1302,15 @@ function normalizeAmount(amount) {
   const n = Number(s);
   if (Number.isNaN(n)) return null;
   return n;
+}
+
+// ✅ NEU: CHF -> Rappen (integer)
+function chfToCents(chf) {
+  const n = Number(chf);
+  if (!Number.isFinite(n)) return null;
+  const cents = Math.round(n * 100);
+  if (!Number.isFinite(cents) || Math.floor(cents) !== cents) return null;
+  return cents;
 }
 
 function getCounters() {
