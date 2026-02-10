@@ -19,7 +19,9 @@ export default function ReceiptPrint({
 
   // Wichtige Daten
   const fundNo = (item?.fundNo || "").toString().trim();
-  const label = (item?.item?.manualLabel || item?.item?.predefinedKey || "").toString().trim();
+  const label = (item?.item?.manualLabel || item?.item?.predefinedKey || "")
+    .toString()
+    .trim();
   const desc = (item?.item?.description || "").toString().trim();
 
   const foundLocation = (item?.foundAt?.location || "").toString().trim();
@@ -27,7 +29,8 @@ export default function ReceiptPrint({
   const foundTime = (item?.foundAt?.time || "").toString().trim();
 
   const caseWorkerName =
-    (item?.caseWorker?.name || item?.caseWorker?.id || "").toString().trim() || "—";
+    (item?.caseWorker?.name || item?.caseWorker?.id || "").toString().trim() ||
+    "—";
 
   const finder = item?.finder || null;
   const owner = item?.owner || null;
@@ -35,12 +38,15 @@ export default function ReceiptPrint({
 
   const title = useMemo(() => {
     if (receiptType === "FUND_RECEIPT") return "Fundquittung";
-    if (receiptType === "OWNER_RECEIPT") return "Empfangsbestätigung Eigentümer/Abholer";
-    if (receiptType === "FINDER_RECEIPT") return "Empfangsbestätigung Finder/Abholer";
+    if (receiptType === "OWNER_RECEIPT")
+      return "Empfangsbestätigung Eigentümer/Abholer";
+    if (receiptType === "FINDER_RECEIPT")
+      return "Empfangsbestätigung Finder/Abholer";
     return "Quittung";
   }, [receiptType]);
 
-  const amountText = amount === null || amount === undefined ? "—" : fmtCHF(amount);
+  const amountText =
+    amount === null || amount === undefined ? "—" : fmtCHF(amount);
 
   const showFinderBlock = receiptType === "FUND_RECEIPT";
   const showOwnerBlock = receiptType === "OWNER_RECEIPT";
@@ -60,13 +66,9 @@ export default function ReceiptPrint({
       return hasPartyData(collector) ? collector : finder;
     }
 
-    // Fallback
     return collector || finder || owner;
   }, [receiptType, finder, owner, collector]);
 
-  // ✅ Empfängername für Unterschrift:
-  // 1) recipientOverride falls gesetzt
-  // 2) sonst aus selectedParty (first/last oder legacy name)
   const recipientName = useMemo(() => {
     const o = (recipientOverride || "").toString().trim();
     if (o) return o;
@@ -74,121 +76,131 @@ export default function ReceiptPrint({
     return auto || "—";
   }, [recipientOverride, selectedParty]);
 
-  const rightSignatureLabel = showOwnerBlock ? "Eigentümer / Abholer" : "Empfänger / Abgeber";
+  const rightSignatureLabel = showOwnerBlock
+    ? "Eigentümer / Abholer"
+    : "Empfänger / Abgeber";
 
   useEffect(() => {
-    const t = window.setTimeout(() => window.print(), 50);
+    const t = window.setTimeout(() => window.print(), 80);
     return () => window.clearTimeout(t);
   }, []);
 
   return (
-    <div style={page}>
+    <div className="receipt-page" style={page}>
       <style>{printCss}</style>
 
-      <div style={header}>
-        <div>
-          <div style={orgTitle}>{orgName || "Organisation"}</div>
-          <div style={orgSub}>{orgContact || ""}</div>
-        </div>
+      {/* Inhalt separat, damit wir im Print gezielt paddings steuern können */}
+      <div className="receipt-content" style={content}>
+        <div style={header}>
+          <div>
+            <div style={orgTitle}>{orgName || "Organisation"}</div>
+            <div style={orgSub}>{orgContact || ""}</div>
+          </div>
 
-        <div style={{ textAlign: "right" }}>
-          <div style={docTitle}>{title}</div>
-          <div style={metaGrid}>
-            <div style={metaK}>Quittungsnummer</div>
-            <div style={metaV}>{receiptNo || "—"}</div>
+          <div style={{ textAlign: "right" }}>
+            <div style={docTitle}>{title}</div>
+            <div style={metaGrid}>
+              <div style={metaK}>Quittungsnummer</div>
+              <div style={metaV}>{receiptNo || "—"}</div>
 
-            <div style={metaK}>Datum</div>
-            <div style={metaV}>{handoverAt.split(",")[0]}</div>
+              <div style={metaK}>Datum</div>
+              <div style={metaV}>{handoverAt.split(",")[0]}</div>
 
-            <div style={metaK}>Sachbearbeiter</div>
-            <div style={metaV}>{caseWorkerName}</div>
+              <div style={metaK}>Sachbearbeiter</div>
+              <div style={metaV}>{caseWorkerName}</div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div style={hr} />
+        <div style={hr} />
 
-      <Section title="ANGABEN ZUR FUNDSACHE">
-        <div style={grid2}>
-          <FieldBox label="Fundnummer" value={fundNo || "—"} />
-          <FieldBox label="Datum / Zeit der Übergabe" value={handoverAt} />
+        <Section title="ANGABEN ZUR FUNDSACHE">
+          <div style={grid2}>
+            <FieldBox label="Fundnummer" value={fundNo || "—"} />
+            <FieldBox label="Datum / Zeit der Übergabe" value={handoverAt} />
 
-          <FieldBox
-            span2
-            label="Gegenstand"
-            value={
-              label ? (
-                desc ? (
-                  <>
+            <FieldBox
+              span2
+              label="Gegenstand"
+              value={
+                label ? (
+                  desc ? (
+                    <>
+                      <div style={{ fontWeight: 800 }}>{label}</div>
+                      <div style={{ opacity: 0.85 }}>{desc}</div>
+                    </>
+                  ) : (
                     <div style={{ fontWeight: 800 }}>{label}</div>
-                    <div style={{ opacity: 0.85 }}>{desc}</div>
-                  </>
+                  )
                 ) : (
-                  <div style={{ fontWeight: 800 }}>{label}</div>
+                  "—"
                 )
-              ) : (
-                "—"
-              )
-            }
-          />
+              }
+            />
 
-          <FieldBox label="Fundort" value={foundLocation || "—"} />
-          <FieldBox
-            label="Fundzeit"
-            value={foundDate ? `${foundDate}${foundTime ? `, ${foundTime}` : ""}` : "—"}
-          />
-        </div>
-      </Section>
-
-      {showFinderBlock && (
-        <Section title="ANGABEN FINDER">
-          <div style={grid2}>
-            <FieldBox span2 label="Finder" value={formatPartyInline(finder)} />
+            <FieldBox label="Fundort" value={foundLocation || "—"} />
             <FieldBox
-              span2
-              label="Finderlohn gewünscht"
-              value={finderRewardWanted ? "ja" : "nein"}
+              label="Fundzeit"
+              value={
+                foundDate
+                  ? `${foundDate}${foundTime ? `, ${foundTime}` : ""}`
+                  : "—"
+              }
             />
           </div>
         </Section>
-      )}
 
-      {showOwnerBlock && (
-        <Section title="ANGABEN EIGENTÜMER / ABHOLER">
-          <div style={grid2}>
-            {/* ✅ vorher: owner fix → jetzt: owner oder collector */}
-            <FieldBox
-              span2
-              label="Eigentümer / Abholer"
-              value={formatPartyInline(hasPartyData(owner) ? owner : collector)}
-            />
-            <FieldBox span2 label="Übergebener Finderlohn" value={amountText} />
+        {showFinderBlock && (
+          <Section title="ANGABEN FINDER">
+            <div style={grid2}>
+              <FieldBox span2 label="Finder" value={formatPartyInline(finder)} />
+              <FieldBox
+                span2
+                label="Finderlohn gewünscht"
+                value={finderRewardWanted ? "ja" : "nein"}
+              />
+            </div>
+          </Section>
+        )}
+
+        {showOwnerBlock && (
+          <Section title="ANGABEN EIGENTÜMER / ABHOLER">
+            <div style={grid2}>
+              <FieldBox
+                span2
+                label="Eigentümer / Abholer"
+                value={formatPartyInline(hasPartyData(owner) ? owner : collector)}
+              />
+              <FieldBox span2 label="Übergebener Finderlohn" value={amountText} />
+            </div>
+          </Section>
+        )}
+
+        {showFinderReceiptBlock && (
+          <Section title="ANGABEN FINDER / ABHOLUNG">
+            <div style={grid2}>
+              <FieldBox span2 label="Grund" value={reason || "—"} />
+              <FieldBox span2 label="Betrag (Finderlohn)" value={amountText} />
+              <FieldBox
+                span2
+                label="Person (Finder / Abholer)"
+                value={formatPartyInline(selectedParty)}
+              />
+            </div>
+          </Section>
+        )}
+
+        <Section title="UNTERSCHRIFTEN">
+          <div style={sigGrid}>
+            <SigBox title="Polizei / Sachbearbeiter" name={caseWorkerName || "—"} />
+            <SigBox title={rightSignatureLabel} name={recipientName || "—"} />
           </div>
         </Section>
-      )}
 
-      {showFinderReceiptBlock && (
-        <Section title="ANGABEN FINDER / ABHOLUNG">
-          <div style={grid2}>
-            <FieldBox span2 label="Grund" value={reason || "—"} />
-            <FieldBox span2 label="Betrag (Finderlohn)" value={amountText} />
-
-            {/* ✅ NEU: Person anzeigen (Abholer oder Finder) */}
-            <FieldBox span2 label="Person (Finder / Abholer)" value={formatPartyInline(selectedParty)} />
-          </div>
-        </Section>
-      )}
-
-      <Section title="UNTERSCHRIFTEN">
-        <div style={sigGrid}>
-          <SigBox title="Polizei / Sachbearbeiter" name={caseWorkerName || "—"} />
-          <SigBox title={rightSignatureLabel} name={recipientName || "—"} />
+        <div style={footer}>
+          <div style={{ opacity: 0.75 }}>LostTrack – Quittung (Print)</div>
+          <div style={{ opacity: 0.75 }}>Erstellt am {handoverAt}</div>
         </div>
-      </Section>
-
-      <div style={footer}>
-        <div style={{ opacity: 0.75 }}>LostTrack – Quittung (Print)</div>
-        <div style={{ opacity: 0.75 }}>Erstellt am {handoverAt}</div>
       </div>
     </div>
   );
@@ -250,20 +262,16 @@ function safeTrim(v) {
 
 function partyDisplayName(p) {
   if (!p) return "";
-  // neu
   const full = `${safeTrim(p.firstName)} ${safeTrim(p.lastName)}`.trim();
   if (full) return full;
-  // legacy fallback
   return safeTrim(p.name) || "";
 }
 
 function partyAddressLines(p) {
   if (!p) return [];
-  // neu
   const street = `${safeTrim(p.street)} ${safeTrim(p.streetNo)}`.trim();
   const city = `${safeTrim(p.zip)} ${safeTrim(p.city)}`.trim();
   const lines = [street, city].filter(Boolean);
-  // legacy fallback
   if (lines.length === 0 && safeTrim(p.address)) return [safeTrim(p.address)];
   return lines;
 }
@@ -307,12 +315,26 @@ function fmtCHF(n) {
    Styles
    =========================== */
 
-const page = { fontFamily: "system-ui", padding: "18mm", color: "#111" };
+const page = {
+  fontFamily: "system-ui",
+  color: "#111",
+  // Kein padding hier: das machen wir im content
+};
+
+const content = {
+  padding: "18mm", // Screen/Default
+};
+
 const header = { display: "flex", justifyContent: "space-between", gap: 18 };
 const orgTitle = { fontWeight: 900, fontSize: 18 };
 const orgSub = { fontSize: 12, opacity: 0.8 };
 const docTitle = { fontWeight: 900, fontSize: 14, marginBottom: 8 };
-const metaGrid = { display: "grid", gridTemplateColumns: "120px 1fr", gap: "4px 10px", fontSize: 12 };
+const metaGrid = {
+  display: "grid",
+  gridTemplateColumns: "120px 1fr",
+  gap: "4px 10px",
+  fontSize: 12,
+};
 const metaK = { opacity: 0.75 };
 const metaV = { fontWeight: 700 };
 const hr = { height: 1, background: "#222", opacity: 0.25, marginTop: 12 };
@@ -327,10 +349,61 @@ const box = {
 const boxLabel = { fontSize: 10, opacity: 0.75, marginBottom: 6 };
 const boxValue = { fontSize: 12 };
 const sigGrid = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 };
-const sigBox = { border: "2px solid rgba(0,0,0,0.7)", borderRadius: 10, padding: "10px 12px", minHeight: 70 };
+const sigBox = {
+  border: "2px solid rgba(0,0,0,0.7)",
+  borderRadius: 10,
+  padding: "10px 12px",
+  minHeight: 70,
+};
 const sigLine = { height: 1, background: "#000", marginTop: 30, marginBottom: 6 };
 const footer = { display: "flex", justifyContent: "space-between", marginTop: 18, fontSize: 10 };
 
 const printCss = `
 @page { size: A4; margin: 10mm; }
+
+@media print {
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    min-height: auto !important;
+    background: #fff !important;
+  }
+
+  /* Wichtig: Outer page darf KEIN padding haben, sonst overflow -> leere Seite 2 */
+  .receipt-page {
+    padding: 0 !important;
+    margin: 0 !important;
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  /* Content: im Druck übernimmt @page margin den Rand */
+  .receipt-content {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* letzte Elemente dürfen keinen "extra bottom space" pushen */
+  .receipt-page *:last-child {
+    margin-bottom: 0 !important;
+  }
+
+  /* keine erzwungenen Umbrüche */
+  * {
+    page-break-before: auto !important;
+    page-break-after: auto !important;
+    break-before: auto !important;
+    break-after: auto !important;
+  }
+
+  body {
+    color: #111 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
 `;

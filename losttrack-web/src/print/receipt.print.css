@@ -191,25 +191,92 @@
   height: 10px;
 }
 
-/* PRINT: A4, keine UI-Ränder, saubere Seitenränder */
+/* =========================================================
+   PRINT: A4, keine Phantom-Seite
+   ========================================================= */
 @media print {
   @page {
     size: A4;
     margin: 12mm 12mm 14mm 12mm;
   }
 
+  /* Browser-Defaults neutralisieren */
   html,
   body {
     background: #fff !important;
     margin: 0 !important;
     padding: 0 !important;
+
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
   }
 
+  /* Druck-Root: keine max-width/padding/margins */
   .rt-page {
-    max-width: none;
-    padding: 0;
+    max-width: none !important;
+    width: 100% !important;
+
+    margin: 0 !important;
+    padding: 0 !important;
+
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+
+    page-break-after: auto !important;
+    break-after: auto !important;
+    page-break-before: auto !important;
+    break-before: auto !important;
+
+    /* Stabilität für Textfluss */
+    orphans: 3;
+    widows: 3;
   }
 
-  /* Keine unnötigen Browser-Header-Footers erzwingen kann man nicht,
-     aber Layout bleibt robust. */
+  /* Global: keine erzwungenen Umbrüche durch Fremdregeln */
+  * {
+    page-break-before: auto !important;
+    page-break-after: auto !important;
+    break-before: auto !important;
+    break-after: auto !important;
+  }
+
+  /* Elemente nicht mitten zerreissen (aber umbruch bleibt möglich wenn nötig) */
+  .rt-header,
+  .rt-section,
+  .rt-field,
+  .rt-signBox,
+  .rt-footer {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Letztes Element darf NICHT pushen (klassischer Phantomseiten-Auslöser) */
+  .rt-page > *:last-child {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
+
+  /* Footer speziell absichern */
+  .rt-footer {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
+
+  /* Falls irgendwo im DOM ein <br> oder spacer am Ende steht */
+  .rt-spacer:last-child {
+    height: 0 !important;
+  }
+
+  /* Optional: wenn es wirklich *immer noch* 2 Seiten macht,
+     dann aktivieren (1–3% kleiner genügt oft bei Chrome-Rundung)
+  */
+  /*
+  .rt-page { font-size: 97% !important; }
+  */
 }
