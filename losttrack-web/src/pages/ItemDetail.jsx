@@ -14,6 +14,7 @@ import {
 import InvestigationSteps from "../components/InvestigationSteps";
 import PartyCardEditor from "../components/PartyCardEditor";
 import ReceiptPrint from "../print/ReceiptPrint.jsx";
+import PrintConfirmModal from "../components/PrintConfirmModal.jsx";
 
 // ✅ Statusliste an Domain anpassen (sonst kann “Ungültiger Status” passieren)
 const STATUS = ["OPEN", "RETURNED", "DISPOSED", "TRANSFERRED"];
@@ -600,6 +601,30 @@ export default function ItemDetail() {
     !canFinderReceipt ||
     (finderReceiptReason === "REWARD_PAYOUT" && (rewardPaid || !wantsReward));
 
+  /* ---------------------------
+   * NEW: Confirm-Modal state
+   * --------------------------- */
+
+  const [printConfirmOpen, setPrintConfirmOpen] = useState(false);
+  const [printConfirmPayload, setPrintConfirmPayload] = useState(null);
+
+  function closePrintConfirm() {
+    setPrintConfirmOpen(false);
+    setPrintConfirmPayload(null);
+  }
+
+  function openPrintConfirm(payload) {
+    setPrintConfirmPayload(payload);
+    setPrintConfirmOpen(true);
+  }
+
+  function confirmAndPrint() {
+    if (!printConfirmPayload) return;
+    const p = printConfirmPayload;
+    closePrintConfirm();
+    triggerReceiptPrint(p);
+  }
+
   return (
     <section style={{ maxWidth: 1100 }}>
       <style>{`
@@ -741,11 +766,12 @@ export default function ItemDetail() {
                     type="button"
                     disabled={!hasFinder}
                     onClick={() => {
-                      triggerReceiptPrint({
+                      openPrintConfirm({
                         receiptType: "FUND_RECEIPT",
                         recipient: personDisplayName(item?.finder),
                         amount: null,
                         reason: "",
+                        finderRewardPayout: null,
                       });
                     }}
                   >
@@ -798,11 +824,12 @@ export default function ItemDetail() {
                     type="button"
                     disabled={!canOwnerReceipt}
                     onClick={() => {
-                      triggerReceiptPrint({
+                      openPrintConfirm({
                         receiptType: "OWNER_RECEIPT",
                         recipient: ownerRecipientName,
                         amount: ownerAmount,
                         reason: "",
+                        finderRewardPayout: null,
                       });
                     }}
                   >
@@ -958,7 +985,8 @@ export default function ItemDetail() {
                         };
                       }
 
-                      triggerReceiptPrint({
+                      // ✅ Grund wird NICHT im Modal angezeigt (aber weiterhin ans Repo übergeben wie bisher)
+                      openPrintConfirm({
                         receiptType: "FINDER_RECEIPT",
                         recipient: finderRecipientName,
                         amount: finderAmount,
@@ -1197,6 +1225,20 @@ export default function ItemDetail() {
           </>
         )}
       </div>
+
+      {/* ✅ NEW: Print confirmation modal */}
+      <PrintConfirmModal
+        open={printConfirmOpen}
+        onClose={closePrintConfirm}
+        onConfirm={confirmAndPrint}
+        item={item}
+        receiptType={printConfirmPayload?.receiptType || "FUND_RECEIPT"}
+        recipientOverride={printConfirmPayload?.recipient || ""}
+        amount={printConfirmPayload?.amount ?? null}
+        finderRewardWanted={!!item?.finder?.rewardRequested}
+        isFinderRewardPayout={printConfirmPayload?.receiptType === "FINDER_RECEIPT" && !!printConfirmPayload?.finderRewardPayout?.enabled}
+        rewardPaid={rewardPaid}
+      />
     </section>
   );
 }
