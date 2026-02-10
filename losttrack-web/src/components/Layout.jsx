@@ -13,30 +13,38 @@ export default function Layout() {
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "100%" }}>
-      <SideNav />
-      <div style={{ display: "grid", gridTemplateRows: "56px auto 1fr", height: "100%" }}>
-        <TopBar />
+    <div className="app-shell">
+      {/* ---------- SIDEBAR ---------- */}
+      <aside className="app-sidebar">
+        <SideNav />
+      </aside>
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "8px 16px",
-            borderBottom: "1px solid #eee",
-            background: "#fafafa",
-          }}
-        >
+      {/* ---------- MAIN ---------- */}
+      <div className="app-main">
+        {/* Topbar (Navigation / Titel etc.) */}
+        <header className="app-topbar">
+          <TopBar />
+        </header>
+
+        {/* Benutzerleiste */}
+        <div className="app-userbar">
           <div style={{ color: "#555" }}>
             Eingeloggt als: <b>{userName || "—"}</b>
           </div>
-          <button onClick={onLogout} style={{ cursor: "pointer" }}>
+          <button
+            onClick={onLogout}
+            style={{
+              cursor: "pointer",
+              padding: "6px 12px",
+              borderRadius: 6,
+            }}
+          >
             Abmelden
           </button>
         </div>
 
-        <main style={{ padding: 16 }}>
+        {/* Seiteninhalt */}
+        <main className="app-content">
           <Outlet />
         </main>
       </div>
