@@ -595,8 +595,9 @@ export function createReceipt({
     printedBy,
   };
 
-  // ✅ NEU: Wenn OWNER_RECEIPT mit Betrag (Finderlohn-Einnahme) => automatisch IN ins Kassenbuch
-  // Bedingung: Finderlohn ist gewünscht und Betrag > 0
+  // -------------------------------------------------
+  // ✅ AUTO: EINNAHME (IN) beim OWNER_RECEIPT
+  // -------------------------------------------------
   let depositInfo = null;
 
   if (
@@ -608,9 +609,10 @@ export function createReceipt({
     const cents = chfToCents(receipt.amount);
     if (!cents || cents <= 0) return { ok: false, error: "Ungültiger Betrag für Finderlohn." };
 
-    // Doppel-Einnahme verhindern (harte Sperre)
     if (current?.finderRewardDeposit?.received) {
-      const existing = current?.finderRewardDeposit?.ledgerId ? ` (Kasse: ${current.finderRewardDeposit.ledgerId})` : "";
+      const existing = current?.finderRewardDeposit?.ledgerId
+        ? ` (Kasse: ${current.finderRewardDeposit.ledgerId})`
+        : "";
       return { ok: false, error: `Finderlohn wurde bereits eingenommen${existing}.` };
     }
 
@@ -637,23 +639,78 @@ export function createReceipt({
       actor: printedBy,
       ledgerId: posted?.entry?.id || null,
       reason: receipt.notes || "Finderlohn-Einzahlung (Eigentümer)",
+      receiptId: receiptId,
     };
   }
 
+  // -------------------------------------------------
+  // ✅ AUTO: AUSZAHLUNG (OUT) beim FINDER_RECEIPT
+  // Bedingung: notes === "Finderlohn-Abholung" und amount > 0
+  // -------------------------------------------------
+  let payoutInfo = null;
+
+  const isFinderPayout =
+    receipt.type === "FINDER_RECEIPT" &&
+    receipt.amount !== null &&
+    Number(receipt.amount) > 0 &&
+    String(receipt.notes || "").trim() === "Finderlohn-Abholung";
+
+  if (isFinderPayout) {
+    const cents = chfToCents(receipt.amount);
+    if (!cents || cents <= 0) return { ok: false, error: "Ungültiger Betrag für Finderlohn-Auszahlung." };
+
+    // ✅ Doppel-Auszahlung sperren
+    if (current?.finderReward?.paidAt) {
+      const existing = current?.finderReward?.cashbookId ? ` (Kasse: ${current.finderReward.cashbookId})` : "";
+      return { ok: false, error: `Finderlohn wurde bereits ausbezahlt${existing}.` };
+    }
+
+    const cw =
+      (getCurrentUserName() ?? current?.caseWorker ?? "")
+        ?.toString?.()
+        ?.trim?.() || null;
+
+    const posted = postCashbookEntry({
+      type: "OUT",
+      amountCents: cents,
+      item: current,
+      reason: "Finderlohn-Abholung",
+      actor: printedBy,
+      caseWorker: cw,
+    });
+
+    if (!posted?.ok) return { ok: false, error: posted?.error || "Kassenbuch-Buchung fehlgeschlagen." };
+
+    payoutInfo = {
+      paidAt: now,
+      amountCents: cents,
+      paidBy: printedBy,
+      cashbookId: posted?.entry?.id || null,
+      receiptId: receiptId,
+      reason: "Finderlohn-Abholung",
+    };
+  }
+
+  // -------------------------------------------------
+  // Record speichern
+  // -------------------------------------------------
   const updated = normalizeOne({
     ...current,
     receipts: [...(current.receipts || []), receipt],
 
-    // ✅ wenn Einzahlung erfolgt: Sperrinfo speichern
+    // ✅ Einzahlung speichern, wenn erfolgt
     finderRewardDeposit: depositInfo ? depositInfo : current.finderRewardDeposit || null,
+
+    // ✅ Auszahlung speichern, wenn erfolgt
+    finderReward: payoutInfo ? payoutInfo : current.finderReward || null,
 
     updatedAt: now,
   });
 
   const after = slimSnapshot(updated);
-
   persistRecord(updated);
 
+  // Audit: Quittung
   appendAudit({
     type: "RECEIPT_PRINTED",
     fundNo: updated.fundNo || null,
@@ -662,7 +719,7 @@ export function createReceipt({
     actor: printedBy,
   });
 
-  // ✅ separates Audit (optional aber sehr hilfreich)
+  // Audit: Einzahlung
   if (depositInfo) {
     appendAudit({
       type: "FINDER_REWARD_DEPOSIT_RECEIVED",
@@ -673,7 +730,27 @@ export function createReceipt({
         at: now,
         amountCents: depositInfo.amountCents,
         ledgerId: depositInfo.ledgerId,
+        receiptId: depositInfo.receiptId,
         reason: depositInfo.reason,
+      },
+      diff: null,
+      actor: printedBy,
+    });
+  }
+
+  // Audit: Auszahlung
+  if (payoutInfo) {
+    appendAudit({
+      type: "FINDER_REWARD_PAID",
+      fundNo: updated.fundNo || null,
+      snapshot: {
+        id: updated.id,
+        actor: printedBy,
+        at: now,
+        amountCents: payoutInfo.amountCents,
+        cashbookId: payoutInfo.cashbookId,
+        receiptId: payoutInfo.receiptId,
+        reason: payoutInfo.reason,
       },
       diff: null,
       actor: printedBy,
@@ -997,6 +1074,7 @@ function slimSnapshot(item) {
 
     // ✅ NEU: Einnahme-Sperre & Nachvollzug
     finderRewardDeposit: item?.finderRewardDeposit || null,
+    finderReward: item?.finderReward || null,
   };
 }
 
@@ -1084,6 +1162,9 @@ function normalizeOne(item) {
 
   // ✅ NEU: default Feld für Einzahlung (Sperre gegen Doppelbuchung)
   if (!("finderRewardDeposit" in out)) out.finderRewardDeposit = null;
+
+  // ✅ Auszahlung (OUT) – Sperre/Info
+  if (!("finderReward" in out)) out.finderReward = null;
 
   return out;
 }
