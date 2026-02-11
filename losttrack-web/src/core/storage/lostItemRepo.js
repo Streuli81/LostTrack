@@ -4,6 +4,9 @@ import { storage } from "./storage.js";
 import { validateLostItem, VALIDATION_MODE } from "../../domain/lostItem.validators.js";
 import { getCurrentUserName } from "../auth/auth.js";
 
+// ✅ Phase 1: Fristen/Retention (ZH öffentlicher Raum)
+import { calculateRetention, getRetentionStatus } from "../../domain/retention.js";
+
 /**
  * Storage Keys (versioniert) – getrennt für Revisionssicherheit
  */
@@ -16,6 +19,9 @@ const KEY_COUNTERS = `lostItems.counters.${STORAGE_VERSION}`; // Zähler (z.B. Q
 
 // ✅ Kassenbuch (append-only)
 const KEY_CASHBOOK = `lostItems.cashbook.${STORAGE_VERSION}`; // append-only Kassenbuch
+
+// ✅ Phase 1: Schwellen / Regeln (ZH)
+const HIGH_VALUE_CHF = 5000; // Bargeld/Hochwert ab CHF 5'000 => Delikt-Check Flag
 
 /* -------------------------------------------------
  * READ
@@ -31,6 +37,15 @@ export function listDrafts() {
 
 export function listAuditLog() {
   return storage.getJson(KEY_AUDIT, []);
+}
+
+/**
+ * ✅ Phase 1: Convenience – Items nach Retention-Status filtern
+ * (rein fachlich, UI kann später entscheiden was sie damit macht)
+ */
+export function listLostItemsByRetentionStatus(status) {
+  const s = String(status || "").toUpperCase().trim();
+  return listLostItems().filter((it) => String(getRetentionStatus(it) || "").toUpperCase() === s);
 }
 
 /**
@@ -229,7 +244,9 @@ export function receiveOwnerReward({
 
   // ✅ Doppel-Einnahme verhindern
   if (current?.finderRewardDeposit?.received) {
-    const existing = current?.finderRewardDeposit?.ledgerId ? ` (Kasse: ${current.finderRewardDeposit.ledgerId})` : "";
+    const existing = current?.finderRewardDeposit?.ledgerId
+      ? ` (Kasse: ${current.finderRewardDeposit.ledgerId})`
+      : "";
     return { ok: false, error: `Finderlohn wurde bereits eingenommen${existing}.` };
   }
 
@@ -440,6 +457,10 @@ export function updateLostItem(input, { actor = null } = {}) {
 
   const formattedValue = formatFoundAtDisplay(value);
 
+  // ✅ Phase 1: Retention/Flags nicht verlieren; bei Änderungen Funddatum ggf. neu berechnen
+  const retention = calculateRetention(formattedValue) || existing.retention || null;
+  const flags = computePhase1Flags(formattedValue, existing.flags);
+
   const updated = normalizeOne({
     ...existing,
     ...formattedValue,
@@ -461,6 +482,11 @@ export function updateLostItem(input, { actor = null } = {}) {
 
     // ✅ neue Felder nicht verlieren
     finderRewardDeposit: existing.finderRewardDeposit || null,
+    finderReward: existing.finderReward || null,
+
+    // ✅ Phase 1
+    retention: retention ? { ...existing.retention, ...retention } : existing.retention,
+    flags: { ...(existing.flags || {}), ...(flags || {}) },
 
     updatedAt: now,
   });
@@ -530,6 +556,22 @@ export function commitLostItem(input, { actor = null } = {}) {
 
   record = formatFoundAtDisplay(record);
 
+  // ✅ Phase 1: retention berechnen + flags setzen
+  const retention = calculateRetention(record);
+  if (retention) {
+    record = normalizeOne({
+      ...record,
+      retention: { ...(record.retention || {}), ...retention },
+      flags: { ...(record.flags || {}), ...computePhase1Flags(record, record.flags) },
+    });
+  } else {
+    // falls Funddatum fehlt: flags trotzdem robust setzen (Retention bleibt leer)
+    record = normalizeOne({
+      ...record,
+      flags: { ...(record.flags || {}), ...computePhase1Flags(record, record.flags) },
+    });
+  }
+
   const now = new Date().toISOString();
   const records = storage.getJson(KEY_RECORDS, []);
 
@@ -559,6 +601,66 @@ export function commitLostItem(input, { actor = null } = {}) {
   });
 
   return { ok: true, item: record };
+}
+
+/* -------------------------------------------------
+ * WRITE – RETENTION / VERWERTUNG (Phase 1)
+ * ------------------------------------------------- */
+
+/**
+ * ✅ Verwertung/Entsorgung/Verkauf/Übertrag verbuchen.
+ * Setzt retention.completedAt & dispositionType, und setzt status passend.
+ *
+ * dispositionType:
+ * - "AUCTION" | "SALE" | "RECYCLE" | "DESTROY" | "TRANSFER_TO_MUNICIPAL_ACCOUNT"
+ */
+export function disposeLostItem({ id, dispositionType, actor = null } = {}) {
+  if (!id) return { ok: false, error: "Missing id" };
+
+  const current = getLostItemById(id);
+  if (!current) return { ok: false, error: "Not found" };
+
+  const dt = String(dispositionType || "").toUpperCase().trim();
+  const allowed = new Set(["AUCTION", "SALE", "RECYCLE", "DESTROY", "TRANSFER_TO_MUNICIPAL_ACCOUNT"]);
+  if (!allowed.has(dt)) return { ok: false, error: "Invalid dispositionType" };
+
+  const now = new Date().toISOString();
+  const before = slimSnapshot(current);
+
+  const nextStatus =
+    dt === "TRANSFER_TO_MUNICIPAL_ACCOUNT" ? "TRANSFERRED" : "DISPOSED";
+
+  const updated = normalizeOne({
+    ...current,
+    status: nextStatus,
+    retention: {
+      ...(current.retention || {}),
+      dispositionType: dt,
+      completedAt: now,
+    },
+    updatedAt: now,
+  });
+
+  const after = slimSnapshot(updated);
+  persistRecord(updated);
+
+  appendAudit({
+    type: "DISPOSITION_SET",
+    fundNo: updated.fundNo || null,
+    snapshot: {
+      id: updated.id,
+      actor,
+      at: now,
+      dispositionType: dt,
+      retentionStatus: getRetentionStatus(updated),
+      before,
+      after,
+    },
+    diff: diffSnapshots(before, after),
+    actor,
+  });
+
+  return { ok: true, item: updated };
 }
 
 /* -------------------------------------------------
@@ -1049,6 +1151,10 @@ function slimSnapshot(item) {
       predefinedKey: item?.item?.predefinedKey || "",
       manualLabel: item?.item?.manualLabel || "",
       description: item?.item?.description || "",
+
+      // ✅ Phase 1: Wert/Kategorie für spätere UI
+      category: item?.item?.category || "",
+      estimatedValueCHF: item?.item?.estimatedValueCHF ?? 0,
     },
     investigationSteps: Array.isArray(item?.investigationSteps)
       ? item.investigationSteps.map((s) => ({
@@ -1075,6 +1181,10 @@ function slimSnapshot(item) {
     // ✅ NEU: Einnahme-Sperre & Nachvollzug
     finderRewardDeposit: item?.finderRewardDeposit || null,
     finderReward: item?.finderReward || null,
+
+    // ✅ Phase 1
+    retention: item?.retention || null,
+    flags: item?.flags || null,
   };
 }
 
@@ -1166,6 +1276,10 @@ function normalizeOne(item) {
   // ✅ Auszahlung (OUT) – Sperre/Info
   if (!("finderReward" in out)) out.finderReward = null;
 
+  // ✅ Phase 1: retention/flags default (Backward compatible)
+  if (!("retention" in out) || !out.retention) out.retention = null;
+  if (!("flags" in out) || !out.flags) out.flags = { highValue: false, cash: false, requireDelictCheck: false };
+
   return out;
 }
 
@@ -1181,6 +1295,29 @@ function toIsoOrNull(value) {
   } catch {
     return null;
   }
+}
+
+/* ---------- Phase 1 helpers ---------- */
+
+function computePhase1Flags(item, existingFlags = null) {
+  const prev = existingFlags && typeof existingFlags === "object" ? existingFlags : {};
+  const next = { ...prev };
+
+  const category = String(item?.item?.category || "").toUpperCase().trim();
+  const value = Number(item?.item?.estimatedValueCHF ?? 0) || 0;
+
+  // Bargeld: Kategorie "CASH" (du kannst später Mapping/Dropdown machen)
+  const isCash = category === "CASH";
+
+  next.cash = !!isCash;
+
+  // High Value: Wert >= 5000 CHF
+  next.highValue = value >= HIGH_VALUE_CHF;
+
+  // Delikt-Check: Bargeld ODER High-Value (praxisnah)
+  next.requireDelictCheck = !!(next.cash || next.highValue);
+
+  return next;
 }
 
 /* ---------- sanitize helpers ---------- */

@@ -3,6 +3,10 @@
 /**
  * Domain Model: LostItem (Fundsache)
  * Hinweis: bewusst ohne UI-/Storage-Abhängigkeiten.
+ *
+ * Phase 1 (Fristen- & Aufbewahrungsmanagement, ZH öffentlicher Raum):
+ * - retention: Fristenfelder (12 Monate Storage, 5 Jahre Ownership – informativ)
+ * - flags: Klassifizierung (cash/highValue/requireDelictCheck)
  */
 
 function safeTrim(v) {
@@ -50,20 +54,20 @@ export function createEmptyLostItem() {
   const nowIso = new Date().toISOString();
 
   return {
-    id: "",                 // interne UUID (optional), kann leer bleiben, wenn du nur fundNo nutzt
-    fundNo: "",             // z.B. 2026-000123 (wird bei Save vergeben)
-    createdAt: nowIso,      // automatisch
-    updatedAt: nowIso,      // automatisch
+    id: "", // interne UUID (optional), kann leer bleiben, wenn du nur fundNo nutzt
+    fundNo: "", // z.B. 2026-000123 (wird bei Save vergeben)
+    createdAt: nowIso, // automatisch
+    updatedAt: nowIso, // automatisch
 
     caseWorker: {
-      id: "",               // z.B. "ms"
-      name: "",             // z.B. "M. Streuli"
+      id: "", // z.B. "ms"
+      name: "", // z.B. "M. Streuli"
     },
 
     foundAt: {
-      date: "",             // "YYYY-MM-DD"
-      time: "",             // "HH:MM"
-      location: "",         // Freitext
+      date: "", // "YYYY-MM-DD"
+      time: "", // "HH:MM"
+      location: "", // Freitext
     },
 
     // ✅ Detaillierte Personenerfassung (statt name/address)
@@ -80,21 +84,42 @@ export function createEmptyLostItem() {
     },
 
     item: {
-      predefinedKey: "",    // Key aus Auswahlliste (z.B. "wallet"), leer wenn manuell
-      manualLabel: "",      // Freitext, leer wenn vordefiniert
-      category: "",         // optional: z.B. "Dokumente"
+      predefinedKey: "", // Key aus Auswahlliste (z.B. "wallet"), leer wenn manuell
+      manualLabel: "", // Freitext, leer wenn vordefiniert
+      category: "", // optional: z.B. "Dokumente" oder "CASH"
       brand: "",
       type: "",
       color: "",
       serialNumber: "",
-      description: "",      // Merkmale/Aussehen/Details
-      condition: "",        // z.B. "gut", "beschädigt"
+      description: "", // Merkmale/Aussehen/Details
+      condition: "", // z.B. "gut", "beschädigt"
+
+      // ✅ Phase 1: optionale Wertangabe (für High-Value / Cash-Workflow)
+      // Falls du (noch) kein UI-Feld hast: bleibt einfach leer / 0.
+      estimatedValueCHF: 0, // number
     },
 
-    photos: [],             // später: [{ id, name, dataUrl, createdAt }]
+    // ✅ Phase 1: Fristen-/Aufbewahrungsdaten (ZH öffentlicher Raum)
+    retention: {
+      ruleKey: "PUBLIC_GROUND_ZH", // aktuell fix für deinen Scope
+      startDate: "", // ISO (aus foundAt.date abgeleitet)
+      storageDeadline: "", // ISO (start + 12 Monate / 365 Tage)
+      ownershipDeadline: "", // ISO (start + 5 Jahre / 1825 Tage) – informativ
+      completedAt: "", // ISO, wenn verwertet/abgeschlossen
+      dispositionType: null, // "AUCTION" | "SALE" | "RECYCLE" | "DESTROY" | "TRANSFER_TO_MUNICIPAL_ACCOUNT" | null
+    },
+
+    // ✅ Phase 1: Klassifizierungs-Flags
+    flags: {
+      highValue: false, // z.B. >= 5000 CHF
+      cash: false, // Bargeld
+      requireDelictCheck: false, // z.B. Bargeld > 5'000 oder highValue
+    },
+
+    photos: [], // später: [{ id, name, dataUrl, createdAt }]
     investigationSteps: [], // später: [{ at, by, text }]
     notes: "",
-    status: "OPEN",         // OPEN | RETURNED | DISPOSED | TRANSFERRED (erweiterbar)
+    status: "OPEN", // OPEN | RETURNED | DISPOSED | TRANSFERRED (erweiterbar)
   };
 }
 
@@ -123,6 +148,23 @@ export function normalizeLostItem(input) {
     serialNumber: "",
     description: "",
     condition: "",
+    estimatedValueCHF: 0,
+  };
+
+  // ✅ Phase 1: retention / flags robust initialisieren (Backward compatible)
+  item.retention = item.retention || {
+    ruleKey: "PUBLIC_GROUND_ZH",
+    startDate: "",
+    storageDeadline: "",
+    ownershipDeadline: "",
+    completedAt: "",
+    dispositionType: null,
+  };
+
+  item.flags = item.flags || {
+    highValue: false,
+    cash: false,
+    requireDelictCheck: false,
   };
 
   // trim strings
@@ -135,7 +177,11 @@ export function normalizeLostItem(input) {
 
   // ✅ Backward-Compatibility: falls alte Felder existieren
   // (z.B. finder.name, finder.address aus bestehenden Datensätzen)
-  if (typeof item.finder.name === "string" && !item.finder.lastName && !item.finder.firstName) {
+  if (
+    typeof item.finder.name === "string" &&
+    !item.finder.lastName &&
+    !item.finder.firstName
+  ) {
     const full = safeTrim(item.finder.name);
     // best effort: letzter Teil = Nachname
     const parts = full.split(" ").filter(Boolean);
@@ -180,7 +226,41 @@ export function normalizeLostItem(input) {
   item.item.description = safeTrim(item.item.description);
   item.item.condition = safeTrim(item.item.condition);
 
+  // ✅ Phase 1: estimatedValueCHF normalisieren (number)
+  const v = item.item.estimatedValueCHF;
+  if (typeof v === "string") {
+    // erlaubt "10000" oder "10'000" oder "10 000"
+    const cleaned = v.replace(/['\s]/g, "");
+    const n = Number(cleaned);
+    item.item.estimatedValueCHF = Number.isFinite(n) ? n : 0;
+  } else if (typeof v === "number") {
+    item.item.estimatedValueCHF = Number.isFinite(v) ? v : 0;
+  } else {
+    item.item.estimatedValueCHF = 0;
+  }
+
   item.notes = safeTrim(item.notes);
+
+  // ✅ Phase 1: retention-Felder trimmen/normalisieren
+  item.retention.ruleKey = safeTrim(item.retention.ruleKey) || "PUBLIC_GROUND_ZH";
+  item.retention.startDate = safeTrim(item.retention.startDate);
+  item.retention.storageDeadline = safeTrim(item.retention.storageDeadline);
+  item.retention.ownershipDeadline = safeTrim(item.retention.ownershipDeadline);
+  item.retention.completedAt = safeTrim(item.retention.completedAt);
+
+  // dispositionType bleibt bewusst "roh" (enum/String oder null)
+  const disp = item.retention.dispositionType;
+  if (disp !== null && disp !== undefined) {
+    const s = safeTrim(disp);
+    item.retention.dispositionType = s ? s : null;
+  } else {
+    item.retention.dispositionType = null;
+  }
+
+  // ✅ Phase 1: flags robust booleanisieren
+  item.flags.highValue = !!item.flags.highValue;
+  item.flags.cash = !!item.flags.cash;
+  item.flags.requireDelictCheck = !!item.flags.requireDelictCheck;
 
   // Status normalisieren
   const allowed = new Set(["OPEN", "RETURNED", "DISPOSED", "TRANSFERRED"]);

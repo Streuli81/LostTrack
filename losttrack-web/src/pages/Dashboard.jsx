@@ -1,3 +1,5 @@
+// src/pages/Dashboard.jsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import {
   listDrafts,
@@ -5,6 +7,9 @@ import {
   listAuditLog,
   commitLostItem,
 } from "../core/storage/lostItemRepo";
+
+// ✅ Phase 1: Retention
+import { calculateRetention, getRetentionStatus } from "../domain/retention";
 
 // Optional: kleines Datum-Formatting
 function fmt(value) {
@@ -66,6 +71,118 @@ function getItemHint(record) {
   return "";
 }
 
+/* -----------------------------
+ * ✅ Fristen: UI Helper
+ * ----------------------------- */
+
+function retentionBadge(status) {
+  const s = String(status || "").toUpperCase();
+
+  const base = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    fontSize: 12,
+    padding: "4px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(0,0,0,0.08)",
+    whiteSpace: "nowrap",
+  };
+
+  const dot = (bg) => ({
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    background: bg,
+    boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.15)",
+  });
+
+  if (s === "VERWERTBAR") {
+    return {
+      label: "VERWERTBAR",
+      style: { ...base, background: "rgba(0,0,0,0.04)" },
+      dotStyle: dot("rgba(0,0,0,0.55)"),
+      hint: "Aufbewahrungsfrist überschritten",
+    };
+  }
+  if (s === "URGENT") {
+    return {
+      label: "DRINGEND",
+      style: { ...base, background: "rgba(255,0,0,0.06)" },
+      dotStyle: dot("rgba(220,0,0,0.9)"),
+      hint: "Frist läuft bald ab (≤ 14 Tage)",
+    };
+  }
+  if (s === "WARNING") {
+    return {
+      label: "BALD FÄLLIG",
+      style: { ...base, background: "rgba(255,165,0,0.10)" },
+      dotStyle: dot("rgba(245,140,0,0.95)"),
+      hint: "Frist in Sicht (≤ 60 Tage)",
+    };
+  }
+  if (s === "COMPLETED") {
+    return {
+      label: "ABGESCHLOSSEN",
+      style: { ...base, background: "rgba(0,128,0,0.07)" },
+      dotStyle: dot("rgba(0,140,60,0.95)"),
+      hint: "Verwertung/Abschluss erfasst",
+    };
+  }
+
+  return {
+    label: "OK",
+    style: { ...base, background: "rgba(0,128,0,0.04)" },
+    dotStyle: dot("rgba(0,140,60,0.65)"),
+    hint: "Keine Fristnähe",
+  };
+}
+
+function countStatuses(list) {
+  const c = { OK: 0, WARNING: 0, URGENT: 0, VERWERTBAR: 0, COMPLETED: 0 };
+  for (const r of list || []) {
+    const s = String(r?._retentionStatus || "OK").toUpperCase();
+    if (c[s] === undefined) c[s] = 0;
+    c[s] += 1;
+  }
+  return c;
+}
+
+function weightStatus(s) {
+  const x = String(s || "").toUpperCase();
+  if (x === "VERWERTBAR") return 0;
+  if (x === "URGENT") return 1;
+  if (x === "WARNING") return 2;
+  if (x === "OK") return 3;
+  if (x === "COMPLETED") return 4;
+  return 9;
+}
+
+function StatusCard({ title, value, tone }) {
+  const style = {
+    borderRadius: 12,
+    padding: "10px 10px",
+    border: "1px solid rgba(0,0,0,0.10)",
+    background: "#fff",
+  };
+
+  let head = { color: "#616672" };
+  if (tone === "red") head = { color: "rgba(200,0,0,0.85)" };
+  if (tone === "orange") head = { color: "rgba(200,110,0,0.90)" };
+  if (tone === "green") head = { color: "rgba(0,120,60,0.85)" };
+  if (tone === "dark") head = { color: "rgba(0,0,0,0.85)" };
+  if (tone === "muted") head = { color: "rgba(0,0,0,0.55)" };
+
+  return (
+    <div style={style}>
+      <div style={{ fontSize: 12, fontWeight: 800, ...head }}>{title}</div>
+      <div style={{ fontSize: 22, fontWeight: 900, marginTop: 4, color: "#111" }}>
+        {Number(value || 0)}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [drafts, setDrafts] = useState([]);
   const [records, setRecords] = useState([]);
@@ -91,13 +208,35 @@ export default function Dashboard() {
     });
   }, [drafts]);
 
+  // ✅ Records: zusätzlich Retention-Status berechnen + kritisch zuerst sortieren
+  const recordsWithStatus = useMemo(() => {
+    return [...records].map((r) => {
+      const hasRetention =
+        r?.retention &&
+        (r.retention.storageDeadline || r.retention.startDate || r.retention.ownershipDeadline);
+
+      // best effort: wenn retention fehlt, im UI berechnen (ohne Persist)
+      const computed = !hasRetention ? calculateRetention(r) : null;
+      const temp = computed ? { ...r, retention: { ...(r.retention || {}), ...computed } } : r;
+
+      const st = getRetentionStatus(temp);
+      return { ...temp, _retentionStatus: st };
+    });
+  }, [records]);
+
   const recordsSorted = useMemo(() => {
-    return [...records].sort((a, b) => {
+    return [...recordsWithStatus].sort((a, b) => {
+      const wa = weightStatus(a?._retentionStatus);
+      const wb = weightStatus(b?._retentionStatus);
+      if (wa !== wb) return wa - wb;
+
       const ta = new Date(a.updatedAt ?? a.createdAt ?? 0).getTime();
       const tb = new Date(b.updatedAt ?? b.createdAt ?? 0).getTime();
       return tb - ta;
     });
-  }, [records]);
+  }, [recordsWithStatus]);
+
+  const statusCounts = useMemo(() => countStatuses(recordsWithStatus), [recordsWithStatus]);
 
   const auditSorted = useMemo(() => {
     return [...audit].sort((a, b) => {
@@ -170,6 +309,22 @@ export default function Dashboard() {
           {lastError}
         </div>
       ) : null}
+
+      {/* ✅ Fristen-Summary */}
+      <div style={{ height: 14 }} />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(5, 1fr)",
+          gap: 10,
+        }}
+      >
+        <StatusCard title="VERWERTBAR" value={statusCounts.VERWERTBAR} tone="dark" />
+        <StatusCard title="DRINGEND" value={statusCounts.URGENT} tone="red" />
+        <StatusCard title="BALD FÄLLIG" value={statusCounts.WARNING} tone="orange" />
+        <StatusCard title="OK" value={statusCounts.OK} tone="green" />
+        <StatusCard title="ABGESCHLOSSEN" value={statusCounts.COMPLETED} tone="muted" />
+      </div>
 
       <div style={{ height: 14 }} />
 
@@ -307,67 +462,125 @@ export default function Dashboard() {
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {recordsSorted.slice(0, 12).map((it) => (
-                <div
-                  key={it.id}
-                  style={{
-                    border: "1px solid rgba(0,0,0,0.10)",
-                    borderRadius: 12,
-                    padding: 12,
-                    background: "#fff",
-                    color: "#616672",
-                  }}
-                >
+              {recordsSorted.slice(0, 12).map((it) => {
+                const badge = retentionBadge(it._retentionStatus);
+                const deadline = it?.retention?.storageDeadline ? fmt(it.retention.storageDeadline) : "—";
+
+                return (
                   <div
+                    key={it.id}
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 10,
+                      border: "1px solid rgba(0,0,0,0.10)",
+                      borderRadius: 12,
+                      padding: 12,
+                      background: "#fff",
+                      color: "#616672",
                     }}
                   >
-                    <div style={{ fontWeight: 900 }}>
-                      {safe(it.fundNo ?? it.fundnummer ?? "—")}
-                    </div>
                     <div
                       style={{
-                        color: "var(--muted)",
-                        fontSize: 12,
-                        whiteSpace: "nowrap",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        alignItems: "baseline",
                       }}
                     >
-                      {fmt(it.updatedAt ?? it.createdAt)}
+                      <div style={{ fontWeight: 900 }}>
+                        {safe(it.fundNo ?? it.fundnummer ?? "—")}
+                      </div>
+                      <div
+                        style={{
+                          color: "var(--muted)",
+                          fontSize: 12,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {fmt(it.updatedAt ?? it.createdAt)}
+                      </div>
+                    </div>
+
+                    {/* ✅ Ampel + Frist */}
+                    <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <span title={badge.hint} style={badge.style}>
+                        <span style={badge.dotStyle} />
+                        {badge.label}
+                      </span>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Aufbewahrung bis: <b>{deadline}</b>
+                      </span>
+                    </div>
+
+                    <div style={{ marginTop: 8, fontSize: 14, fontWeight: 700 }}>
+                      Gegenstand: {getItemLabel(it)}
+                    </div>
+
+                    {getItemHint(it) ? (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          color: "var(--muted)",
+                          fontSize: 13,
+                        }}
+                      >
+                        Merkmale: {getItemHint(it)}
+                      </div>
+                    ) : null}
+
+                    <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                      Status: {safe(it.status ?? "—")}
+                    </div>
+
+                    <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                      Sachbearbeiter: {getCaseWorkerLabel(it)}
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
-                  <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700 }}>
-                    Gegenstand: {getItemLabel(it)}
-                  </div>
+        {/* Audit (optional – du hattest es vorbereitet, hier minimal anzeigen) */}
+        <div
+          style={{
+            border: "1px solid rgba(0,0,0,0.1)",
+            borderRadius: 12,
+            padding: 12,
+            background: "#fff",
+          }}
+        >
+          <div style={{ fontWeight: 800, marginBottom: 8 }}>
+            Audit (letzte 12)
+          </div>
 
-                  {getItemHint(it) ? (
-                    <div
-                      style={{
-                        marginTop: 6,
-                        color: "var(--muted)",
-                        fontSize: 13,
-                      }}
-                    >
-                      Merkmale: {getItemHint(it)}
+          {auditSorted.length === 0 ? (
+            <div style={{ color: "var(--muted)" }}>Kein Audit vorhanden.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {auditSorted.slice(0, 12).map((e) => (
+                <div
+                  key={e.id}
+                  style={{
+                    border: "1px solid rgba(0,0,0,0.08)",
+                    borderRadius: 10,
+                    padding: 10,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ fontWeight: 900 }}>{safe(e.type || "—")}</div>
+                    <div style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
+                      {fmt(e.at)}
                     </div>
-                  ) : null}
-
-                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Status: {safe(it.status ?? "—")}
                   </div>
-
                   <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Sachbearbeiter: {getCaseWorkerLabel(it)}
+                    Fundnr.: {safe(e.fundNo || "—")} · Actor: {safe(e.actor || "—")}
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
-       </div>
+      </div>
     </section>
   );
 }
