@@ -80,10 +80,26 @@ export default function ReceiptPrint({
     ? "Eigentümer / Abholer"
     : "Empfänger / Abgeber";
 
+  // ✅ FIX: Auto-Print nur 1x (React StrictMode / Remounts)
   useEffect(() => {
-    const t = window.setTimeout(() => window.print(), 80);
+    // Key so wählen, dass er pro Quittung stabil ist
+    const key = `lt.autoprint.receipt.${receiptNo || "na"}.${receiptType || "na"}`;
+
+    try {
+      const last = Number(sessionStorage.getItem(key) || "0");
+      const now = Date.now();
+
+      // 60s Cooldown: verhindert Double-Print, erlaubt späteres Re-Print
+      if (last && now - last < 60_000) return;
+
+      sessionStorage.setItem(key, String(now));
+    } catch {
+      // wenn sessionStorage blockiert: ohne Schutz weiter (selten)
+    }
+
+    const t = window.setTimeout(() => window.print(), 120);
     return () => window.clearTimeout(t);
-  }, []);
+  }, [receiptNo, receiptType]);
 
   return (
     <div className="receipt-page" style={page}>
@@ -171,7 +187,11 @@ export default function ReceiptPrint({
                 label="Eigentümer / Abholer"
                 value={formatPartyInline(hasPartyData(owner) ? owner : collector)}
               />
-              <FieldBox span2 label="Übergebener Finderlohn" value={amountText} />
+              <FieldBox
+                span2
+                label="Übergebener Finderlohn"
+                value={amountText}
+              />
             </div>
           </Section>
         )}
@@ -192,7 +212,10 @@ export default function ReceiptPrint({
 
         <Section title="UNTERSCHRIFTEN">
           <div style={sigGrid}>
-            <SigBox title="Polizei / Sachbearbeiter" name={caseWorkerName || "—"} />
+            <SigBox
+              title="Polizei / Sachbearbeiter"
+              name={caseWorkerName || "—"}
+            />
             <SigBox title={rightSignatureLabel} name={recipientName || "—"} />
           </div>
         </Section>
@@ -355,11 +378,21 @@ const sigBox = {
   padding: "10px 12px",
   minHeight: 70,
 };
-const sigLine = { height: 1, background: "#000", marginTop: 30, marginBottom: 6 };
-const footer = { display: "flex", justifyContent: "space-between", marginTop: 18, fontSize: 10 };
+const sigLine = {
+  height: 1,
+  background: "#000",
+  marginTop: 30,
+  marginBottom: 6,
+};
+const footer = {
+  display: "flex",
+  justifyContent: "space-between",
+  marginTop: 18,
+  fontSize: 10,
+};
 
 const printCss = `
-@page { size: A4; margin: 10mm; }
+@page { size: A4; margin: 8mm; }
 
 @media print {
   html, body {
@@ -368,31 +401,32 @@ const printCss = `
     height: auto !important;
     min-height: auto !important;
     background: #fff !important;
+    overflow: visible !important;
   }
 
-  /* Wichtig: Outer page darf KEIN padding haben, sonst overflow -> leere Seite 2 */
+  /* Der wichtigste Teil gegen die leere Seite 2 */
   .receipt-page {
     padding: 0 !important;
     margin: 0 !important;
     height: auto !important;
     min-height: auto !important;
     overflow: visible !important;
-    page-break-after: auto !important;
-    break-after: auto !important;
+
+    /* Micro-Overflow abfangen (Chrome/Edge) */
+    zoom: 0.97; /* wenn nötig: 0.96 */
   }
 
-  /* Content: im Druck übernimmt @page margin den Rand */
   .receipt-content {
     padding: 0 !important;
     margin: 0 !important;
   }
 
-  /* letzte Elemente dürfen keinen "extra bottom space" pushen */
+  /* letzte Elemente dürfen keinen extra Abstand erzeugen */
   .receipt-page *:last-child {
     margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
   }
 
-  /* keine erzwungenen Umbrüche */
   * {
     page-break-before: auto !important;
     page-break-after: auto !important;
