@@ -42,7 +42,12 @@ export default function PartyCardEditor({
       streetNo: init?.streetNo || "",
       phone: init?.phone || "",
       email: init?.email || "",
-      ...(showRewardRequested ? { rewardRequested: !!init?.rewardRequested } : {}),
+      ...(showRewardRequested
+        ? {
+            rewardRequested: !!init?.rewardRequested,
+            rewardChoice: init?.rewardChoice || (init?.rewardRequested ? "REQUESTED" : ""),
+          }
+        : {}),
     };
 
     // --- Legacy best effort: name/address aufsplitten, wenn neue Felder fehlen
@@ -177,15 +182,29 @@ export default function PartyCardEditor({
           </div>
 
           {showRewardRequested ? (
-            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-              <input
-                type="checkbox"
-                checked={!!value.rewardRequested}
-                onChange={(e) => setValue({ ...value, rewardRequested: e.target.checked })}
-                disabled={busy}
-              />
-              Finderlohn gewünscht
-            </label>
+            <fieldset style={{ border: "1px solid rgba(0,0,0,0.18)", borderRadius: 8, margin: "10px 0 0", padding: "8px 10px" }}>
+              <legend style={{ fontSize: 13, fontWeight: 700, padding: "0 4px" }}>Finderlohn</legend>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <input
+                  type="radio"
+                  name="finder_reward_choice_detail"
+                  checked={value.rewardChoice === "REQUESTED"}
+                  onChange={() => setValue({ ...value, rewardChoice: "REQUESTED", rewardRequested: true })}
+                  disabled={busy}
+                />
+                Finderlohn ist gewünscht
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="radio"
+                  name="finder_reward_choice_detail"
+                  checked={value.rewardChoice === "WAIVED"}
+                  onChange={() => setValue({ ...value, rewardChoice: "WAIVED", rewardRequested: false })}
+                  disabled={busy}
+                />
+                Ich verzichte auf einen Finderlohn
+              </label>
+            </fieldset>
           ) : null}
         </>
       ) : null}
@@ -277,7 +296,7 @@ function empty(showRewardRequested) {
     streetNo: "",
     phone: "",
     email: "",
-    ...(showRewardRequested ? { rewardRequested: false } : {}),
+    ...(showRewardRequested ? { rewardRequested: false, rewardChoice: "" } : {}),
   };
 }
 

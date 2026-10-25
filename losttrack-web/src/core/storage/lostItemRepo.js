@@ -1338,6 +1338,9 @@ function sanitizeParty(p) {
 
 function sanitizeFinder(f) {
   if (!f) return null;
+  const rewardChoice = ["REQUESTED", "WAIVED"].includes(f.rewardChoice)
+    ? f.rewardChoice
+    : "";
   return {
     firstName: (f.firstName ?? "").toString().trim(),
     lastName: (f.lastName ?? "").toString().trim(),
@@ -1347,7 +1350,8 @@ function sanitizeFinder(f) {
     streetNo: (f.streetNo ?? "").toString().trim(),
     phone: (f.phone ?? "").toString().trim(),
     email: (f.email ?? "").toString().trim(),
-    rewardRequested: !!f.rewardRequested,
+    rewardRequested: rewardChoice ? rewardChoice === "REQUESTED" : !!f.rewardRequested,
+    rewardChoice,
   };
 }
 

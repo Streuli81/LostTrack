@@ -81,6 +81,7 @@ export function createEmptyLostItem() {
       phone: "",
       email: "",
       rewardRequested: false,
+      rewardChoice: "", // "REQUESTED" | "WAIVED"; leer bei noch nicht getroffener Wahl
     },
 
     item: {
@@ -102,9 +103,14 @@ export function createEmptyLostItem() {
     // ✅ Phase 1: Fristen-/Aufbewahrungsdaten (ZH öffentlicher Raum)
     retention: {
       ruleKey: "PUBLIC_GROUND_ZH", // aktuell fix für deinen Scope
-      startDate: "", // ISO (aus foundAt.date abgeleitet)
-      storageDeadline: "", // ISO (start + 12 Monate / 365 Tage)
-      ownershipDeadline: "", // ISO (start + 5 Jahre / 1825 Tage) – informativ
+      custodyStartDate: "", // Datum, ab dem Polizei/öffentliche Anstalt die Sache aufbewahrt (Art. 721 ZGB)
+      auctionReviewDate: "", // custodyStartDate + 12 Kalendermonate; keine automatische Verwertungsfreigabe
+      noticeDate: "", // Datum der Anzeige/Bekanntmachung gemäss Art. 722 ZGB
+      noticeType: "", // "POLICE_REPORT" | "PUBLIC_ANNOUNCEMENT"
+      finderAcquisitionReviewDate: "", // noticeDate + 5 Kalenderjahre; möglicher Erwerb der Finderperson
+      startDate: "", // Legacy-Feld, wird nicht mehr für Fristen verwendet
+      storageDeadline: "", // Legacy-Feld, wird nicht mehr für Fristen verwendet
+      ownershipDeadline: "", // Legacy-Feld, wird nicht mehr für Fristen verwendet
       completedAt: "", // ISO, wenn verwertet/abgeschlossen
       dispositionType: null, // "AUCTION" | "SALE" | "RECYCLE" | "DESTROY" | "TRANSFER_TO_MUNICIPAL_ACCOUNT" | null
     },
@@ -154,6 +160,11 @@ export function normalizeLostItem(input) {
   // ✅ Phase 1: retention / flags robust initialisieren (Backward compatible)
   item.retention = item.retention || {
     ruleKey: "PUBLIC_GROUND_ZH",
+    custodyStartDate: "",
+    auctionReviewDate: "",
+    noticeDate: "",
+    noticeType: "",
+    finderAcquisitionReviewDate: "",
     startDate: "",
     storageDeadline: "",
     ownershipDeadline: "",
@@ -243,6 +254,11 @@ export function normalizeLostItem(input) {
 
   // ✅ Phase 1: retention-Felder trimmen/normalisieren
   item.retention.ruleKey = safeTrim(item.retention.ruleKey) || "PUBLIC_GROUND_ZH";
+  item.retention.custodyStartDate = safeTrim(item.retention.custodyStartDate);
+  item.retention.auctionReviewDate = safeTrim(item.retention.auctionReviewDate);
+  item.retention.noticeDate = safeTrim(item.retention.noticeDate);
+  item.retention.noticeType = safeTrim(item.retention.noticeType);
+  item.retention.finderAcquisitionReviewDate = safeTrim(item.retention.finderAcquisitionReviewDate);
   item.retention.startDate = safeTrim(item.retention.startDate);
   item.retention.storageDeadline = safeTrim(item.retention.storageDeadline);
   item.retention.ownershipDeadline = safeTrim(item.retention.ownershipDeadline);

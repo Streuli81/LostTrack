@@ -97,28 +97,28 @@ function retentionBadge(status) {
     boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.15)",
   });
 
-  if (s === "VERWERTBAR") {
+  if (s === "REVIEW_REQUIRED") {
     return {
-      label: "VERWERTBAR",
+      label: "AUFBEWAHRUNG PRÜFEN",
       style: { ...base, background: "rgba(0,0,0,0.04)" },
       dotStyle: dot("rgba(0,0,0,0.55)"),
-      hint: "Aufbewahrungsfrist überschritten",
+      hint: "Aufbewahrungsdatum fehlt/ist ungültig oder die Einjahresgrenze ist erreicht. Eine Versteigerung braucht zusätzlich vorgängige Auskündung und Bewilligung der zuständigen Behörde (Art. 721 ZGB).",
     };
   }
   if (s === "URGENT") {
     return {
-      label: "DRINGEND",
       style: { ...base, background: "rgba(255,0,0,0.06)" },
       dotStyle: dot("rgba(220,0,0,0.9)"),
-      hint: "Frist läuft bald ab (≤ 14 Tage)",
+      label: "FRIST LÄUFT BALD AB",
+      hint: "Die Einjahresgrenze ab Beginn der Aufbewahrung nähert sich. Sie erlaubt keine automatische Verwertung.",
     };
   }
   if (s === "WARNING") {
     return {
-      label: "BALD FÄLLIG",
+      label: "FRIST NÄHERT SICH",
       style: { ...base, background: "rgba(255,165,0,0.10)" },
       dotStyle: dot("rgba(245,140,0,0.95)"),
-      hint: "Frist in Sicht (≤ 60 Tage)",
+      hint: "Die Einjahresgrenze ab Beginn der Aufbewahrung nähert sich. Sie erlaubt keine automatische Verwertung.",
     };
   }
   if (s === "COMPLETED") {
@@ -131,17 +131,17 @@ function retentionBadge(status) {
   }
 
   return {
-    label: "OK",
+    label: "FRIST LÄUFT",
     style: { ...base, background: "rgba(0,128,0,0.04)" },
     dotStyle: dot("rgba(0,140,60,0.65)"),
-    hint: "Keine Fristnähe",
+    hint: "Die Einjahresgrenze nach Art. 721 ZGB liegt mehr als 60 Tage in der Zukunft.",
   };
 }
 
 function countStatuses(list) {
-  const c = { OK: 0, WARNING: 0, URGENT: 0, VERWERTBAR: 0, COMPLETED: 0 };
+  const c = { OK: 0, WARNING: 0, URGENT: 0, REVIEW_REQUIRED: 0, COMPLETED: 0 };
   for (const r of list || []) {
-    const s = String(r?._retentionStatus || "OK").toUpperCase();
+    const s = String(r?._retentionStatus || "REVIEW_REQUIRED").toUpperCase();
     if (c[s] === undefined) c[s] = 0;
     c[s] += 1;
   }
@@ -150,7 +150,7 @@ function countStatuses(list) {
 
 function weightStatus(s) {
   const x = String(s || "").toUpperCase();
-  if (x === "VERWERTBAR") return 0;
+  if (x === "REVIEW_REQUIRED") return 0;
   if (x === "URGENT") return 1;
   if (x === "WARNING") return 2;
   if (x === "OK") return 3;
@@ -213,7 +213,7 @@ export default function Dashboard() {
     return [...records].map((r) => {
       const hasRetention =
         r?.retention &&
-        (r.retention.storageDeadline || r.retention.startDate || r.retention.ownershipDeadline);
+        (r.retention.custodyStartDate || r.retention.noticeDate || r.retention.auctionReviewDate);
 
       // best effort: wenn retention fehlt, im UI berechnen (ohne Persist)
       const computed = !hasRetention ? calculateRetention(r) : null;
@@ -315,14 +315,14 @@ export default function Dashboard() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(5, 1fr)",
+        gridTemplateColumns: "repeat(5, 1fr)",
           gap: 10,
         }}
       >
-        <StatusCard title="VERWERTBAR" value={statusCounts.VERWERTBAR} tone="dark" />
-        <StatusCard title="DRINGEND" value={statusCounts.URGENT} tone="red" />
-        <StatusCard title="BALD FÄLLIG" value={statusCounts.WARNING} tone="orange" />
-        <StatusCard title="OK" value={statusCounts.OK} tone="green" />
+        <StatusCard title="PRÜFUNG ERFORDERLICH" value={statusCounts.REVIEW_REQUIRED} tone="dark" />
+        <StatusCard title="FRIST LÄUFT BALD AB" value={statusCounts.URGENT} tone="red" />
+        <StatusCard title="FRIST NÄHERT SICH" value={statusCounts.WARNING} tone="orange" />
+        <StatusCard title="IM HINTERLEGTEN FRISTLAUF" value={statusCounts.OK} tone="green" />
         <StatusCard title="ABGESCHLOSSEN" value={statusCounts.COMPLETED} tone="muted" />
       </div>
 
@@ -464,7 +464,10 @@ export default function Dashboard() {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {recordsSorted.slice(0, 12).map((it) => {
                 const badge = retentionBadge(it._retentionStatus);
-                const deadline = it?.retention?.storageDeadline ? fmt(it.retention.storageDeadline) : "—";
+                const auctionDate = it?.retention?.auctionReviewDate ? fmt(it.retention.auctionReviewDate) : "—";
+                const finderDate = it?.retention?.finderAcquisitionReviewDate
+                  ? fmt(it.retention.finderAcquisitionReviewDate)
+                  : "—";
 
                 return (
                   <div
@@ -506,7 +509,10 @@ export default function Dashboard() {
                         {badge.label}
                       </span>
                       <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                        Aufbewahrung bis: <b>{deadline}</b>
+                        Einjahresgrenze Art. 721 (Auktion prüfen): <b>{auctionDate}</b>
+                      </span>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        5-Jahresfrist Art. 722 (Finder-Erwerb prüfen): <b>{finderDate}</b>
                       </span>
                     </div>
 

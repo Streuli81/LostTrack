@@ -79,6 +79,12 @@ export default function ReceiptPrint({
   const rightSignatureLabel = showOwnerBlock
     ? "Eigentümer / Abholer"
     : "Empfänger / Abgeber";
+  const rewardChoice = item?.finder?.rewardChoice || (finderRewardWanted ? "REQUESTED" : "");
+  const fundReceiptRewardText = rewardChoice === "REQUESTED"
+    ? "Finderlohn gewünscht"
+    : rewardChoice === "WAIVED"
+      ? "Finder/in verzichtet freiwillig auf Finderlohn. Der Ersatz notwendiger Auslagen bleibt vorbehalten."
+      : "Keine ausdrückliche Wahl erfasst";
 
   // ✅ FIX: Auto-Print nur 1x (React StrictMode / Remounts)
   useEffect(() => {
@@ -172,8 +178,8 @@ export default function ReceiptPrint({
               <FieldBox span2 label="Finder" value={formatPartyInline(finder)} />
               <FieldBox
                 span2
-                label="Finderlohn gewünscht"
-                value={finderRewardWanted ? "ja" : "nein"}
+                label="Erklärung zum Finderlohn"
+                value={fundReceiptRewardText}
               />
             </div>
           </Section>
@@ -210,14 +216,24 @@ export default function ReceiptPrint({
           </Section>
         )}
 
-        <Section title="UNTERSCHRIFTEN">
-          <div style={sigGrid}>
-            <SigBox
-              title="Polizei / Sachbearbeiter"
-              name={caseWorkerName || "—"}
-            />
-            <SigBox title={rightSignatureLabel} name={recipientName || "—"} />
-          </div>
+        <Section title={showFinderBlock ? "UNTERSCHRIFT FINDER/IN" : "UNTERSCHRIFTEN"}>
+          {showFinderBlock ? (
+            <div style={{ ...sigBox, minHeight: 76 }}>
+              <div style={{ fontSize: 12 }}>
+                Ich bestätige die Übergabe der Fundsache und die oben festgehaltene Erklärung zum Finderlohn.
+              </div>
+              <div style={sigLine} />
+              <div style={{ fontSize: 12, opacity: 0.85 }}>{recipientName || "—"}</div>
+            </div>
+          ) : (
+            <div style={sigGrid}>
+              <SigBox
+                title="Polizei / Sachbearbeiter"
+                name={caseWorkerName || "—"}
+              />
+              <SigBox title={rightSignatureLabel} name={recipientName || "—"} />
+            </div>
+          )}
         </Section>
 
         <div style={footer}>

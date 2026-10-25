@@ -201,7 +201,7 @@ export default function NewItem() {
           value={data.caseWorker.id}
           onChange={(e) => setField("caseWorker.id", e.target.value)}
           style={inputStyle(!!err("caseWorker.id"))}
-          placeholder='z.B. "ms"'
+          placeholder='z.B. "3xxx"'
           autoComplete="off"
           name="caseworker_id"
         />
@@ -231,7 +231,7 @@ export default function NewItem() {
               setField("foundAt.date", normalized);
             }}
             style={inputStyle(!!err("foundAt.date"))}
-            placeholder="25.01.2026"
+            placeholder="01.01.2026"
             autoComplete="off"
             name="found_date"
           />
@@ -251,6 +251,50 @@ export default function NewItem() {
             autoComplete="off"
             name="found_time"
           />
+        </Field>
+      </div>
+
+      <h3 style={{ marginTop: 18, marginBottom: 6 }}>Fristdaten nach ZGB</h3>
+      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 10 }}>
+        Das Funddatum löst diese Fristen nicht automatisch aus. Erfasse die tatsächliche Übernahme in die Aufbewahrung
+        sowie das Datum der Anzeige oder Bekanntmachung.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Field label="Beginn der Aufbewahrung (Art. 721 ZGB)" error={err("retention.custodyStartDate")}>
+          <input
+            type="text"
+            value={data.retention.custodyStartDate}
+            onChange={(e) => setField("retention.custodyStartDate", e.target.value)}
+            onBlur={(e) => setField("retention.custodyStartDate", normalizeDate(e.target.value))}
+            style={inputStyle(!!err("retention.custodyStartDate"))}
+            placeholder="TT.MM.JJJJ"
+            autoComplete="off"
+            name="retention_custody_start_date"
+          />
+        </Field>
+        <Field label="Datum Anzeige/Bekanntmachung (Art. 722 ZGB)" error={err("retention.noticeDate")}>
+          <input
+            type="text"
+            value={data.retention.noticeDate}
+            onChange={(e) => setField("retention.noticeDate", e.target.value)}
+            onBlur={(e) => setField("retention.noticeDate", normalizeDate(e.target.value))}
+            style={inputStyle(!!err("retention.noticeDate"))}
+            placeholder="TT.MM.JJJJ"
+            autoComplete="off"
+            name="retention_notice_date"
+          />
+        </Field>
+        <Field label="Grundlage des Fristbeginns" error={err("retention.noticeType")}>
+          <select
+            value={data.retention.noticeType}
+            onChange={(e) => setField("retention.noticeType", e.target.value)}
+            style={inputStyle(!!err("retention.noticeType"))}
+            name="retention_notice_type"
+          >
+            <option value="">Bitte auswählen</option>
+            <option value="POLICE_REPORT">Anzeige bei der Polizei</option>
+            <option value="PUBLIC_ANNOUNCEMENT">Öffentliche Bekanntmachung</option>
+          </select>
         </Field>
       </div>
 
@@ -367,17 +411,48 @@ export default function NewItem() {
         />
       </Field>
 
-      <div style={{ marginBottom: 14 }}>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      <fieldset
+        aria-describedby={err("finder.rewardChoice") ? "finder-reward-choice-error" : undefined}
+        style={{
+          border: err("finder.rewardChoice") ? "1px solid #b00020" : "1px solid rgba(0,0,0,0.2)",
+          borderRadius: 8,
+          margin: "0 0 14px",
+          padding: "10px 12px",
+        }}
+      >
+        <legend style={{ fontWeight: 700, padding: "0 4px" }}>Finderlohn</legend>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <input
-            type="checkbox"
-            checked={!!data.finder.rewardRequested}
-            onChange={(e) => setField("finder.rewardRequested", e.target.checked)}
-            name="finder_reward_requested"
+            type="radio"
+            name="finder_reward_choice"
+            value="REQUESTED"
+            checked={(data.finder.rewardChoice || (data.finder.rewardRequested ? "REQUESTED" : "")) === "REQUESTED"}
+            onChange={() => {
+              setField("finder.rewardChoice", "REQUESTED");
+              setField("finder.rewardRequested", true);
+            }}
           />
-          Finderlohn gewünscht
+          Finderlohn ist gewünscht
         </label>
-      </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="radio"
+            name="finder_reward_choice"
+            value="WAIVED"
+            checked={data.finder.rewardChoice === "WAIVED"}
+            onChange={() => {
+              setField("finder.rewardChoice", "WAIVED");
+              setField("finder.rewardRequested", false);
+            }}
+          />
+          Verzicht auf Finderlohn
+        </label>
+        {err("finder.rewardChoice") ? (
+          <div id="finder-reward-choice-error" role="alert" style={{ color: "#b00020", marginTop: 6, fontSize: 13 }}>
+            {err("finder.rewardChoice")}
+          </div>
+        ) : null}
+      </fieldset>
 
       {/* Gegenstand */}
       <h3 style={{ marginTop: 18, marginBottom: 8 }}>Gegenstand</h3>
@@ -388,7 +463,7 @@ export default function NewItem() {
           value={data.item.predefinedKey}
           onChange={(e) => setField("item.predefinedKey", e.target.value)}
           style={inputStyle(!!err("item.predefinedKey"))}
-          placeholder='z.B. "wallet"'
+          placeholder='z.B. "Schlüssel"'
           autoComplete="off"
           name="item_predefined_key"
         />
@@ -672,6 +747,12 @@ function normalizeLostItemDates(item) {
       ...(item.foundAt || {}),
       date: dateNorm || (item?.foundAt?.date || ""),
       time: timeNorm || (item?.foundAt?.time || ""),
+    },
+    retention: {
+      ...(item.retention || {}),
+      custodyStartDate:
+        normalizeDate(item?.retention?.custodyStartDate || "") || item?.retention?.custodyStartDate || "",
+      noticeDate: normalizeDate(item?.retention?.noticeDate || "") || item?.retention?.noticeDate || "",
     },
   };
 }

@@ -52,6 +52,10 @@ export function validateLostItem(input, { mode = VALIDATION_MODE.DRAFT } = {}) {
   // -------------------------
   const dateIn = valueRaw?.foundAt?.date || "";
   const timeIn = valueRaw?.foundAt?.time || "";
+  const custodyDateIn = valueRaw?.retention?.custodyStartDate || "";
+  const noticeDateIn = valueRaw?.retention?.noticeDate || "";
+  const custodyDateNorm = !isEmpty(custodyDateIn) ? normalizeDateInput(custodyDateIn) : "";
+  const noticeDateNorm = !isEmpty(noticeDateIn) ? normalizeDateInput(noticeDateIn) : "";
 
   const dateNorm = !isEmpty(dateIn) ? normalizeDateInput(dateIn) : "";
   const timeNorm = !isEmpty(timeIn) ? normalizeTimeInput(timeIn) : "";
@@ -65,6 +69,11 @@ export function validateLostItem(input, { mode = VALIDATION_MODE.DRAFT } = {}) {
       ...(valueRaw.foundAt || {}),
       date: dateNorm || (valueRaw?.foundAt?.date || ""),
       time: timeNorm || (valueRaw?.foundAt?.time || ""),
+    },
+    retention: {
+      ...(valueRaw.retention || {}),
+      custodyStartDate: custodyDateNorm || custodyDateIn,
+      noticeDate: noticeDateNorm || noticeDateIn,
     },
   };
 
@@ -103,6 +112,10 @@ export function validateLostItem(input, { mode = VALIDATION_MODE.DRAFT } = {}) {
       setErr("finder.phone", msg);
       setErr("finder.email", msg);
     }
+
+    if (!new Set(["REQUESTED", "WAIVED"]).has(value?.finder?.rewardChoice)) {
+      setErr("finder.rewardChoice", "Bitte Finderlohn wünschen oder ausdrücklich darauf verzichten.");
+    }
   }
 
   // -------------------------
@@ -128,6 +141,22 @@ export function validateLostItem(input, { mode = VALIDATION_MODE.DRAFT } = {}) {
       "foundAt.time",
       "Zeit ungültig. Erlaubt: HH.MM, HH:MM oder HHMM (24h)."
     );
+  }
+
+  if (!isEmpty(custodyDateIn) && !custodyDateNorm) {
+    setErr("retention.custodyStartDate", "Ungültiges Datum. Bitte TT.MM.JJJJ eingeben.");
+  }
+  if (!isEmpty(noticeDateIn) && !noticeDateNorm) {
+    setErr("retention.noticeDate", "Ungültiges Datum. Bitte TT.MM.JJJJ eingeben.");
+  }
+  if (!isEmpty(noticeDateIn) && isEmpty(value?.retention?.noticeType)) {
+    setErr("retention.noticeType", "Bitte angeben, ob die Frist mit Anzeige oder Bekanntmachung beginnt.");
+  }
+  if (isEmpty(noticeDateIn) && !isEmpty(value?.retention?.noticeType)) {
+    setErr("retention.noticeDate", "Bitte das Datum der Anzeige oder Bekanntmachung erfassen.");
+  }
+  if (!isEmpty(value?.retention?.noticeType) && !["POLICE_REPORT", "PUBLIC_ANNOUNCEMENT"].includes(value.retention.noticeType)) {
+    setErr("retention.noticeType", "Ungültige Grundlage des Fristbeginns.");
   }
 
   // Status
