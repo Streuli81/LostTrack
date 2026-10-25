@@ -186,10 +186,10 @@ Sicherungsdatei im Browser als erfolgreich bestätigt. Dies ist seine Rückmeldu
 keine vom Entwicklungsagenten selbst ausgeführte Browserprüfung. Die heruntergeladene
 Datei wird nicht in Git aufgenommen.
 
-Die praktische Wiederherstellung ist noch nicht bestätigt. Dafür die Datei in
-einem separaten Browserprofil mit einem leeren LostTrack-Testbestand
-wiederherstellen, neu anmelden und Fundsachen, Quittungsdaten und Kassenbuch
-vergleichen.
+Am 25.10.2026 hat der Projektverantwortliche auch die Wiederherstellung im
+Browser als erfolgreich bestätigt. Diese Rückmeldung wurde nicht vom
+Entwicklungsagenten selbst überprüft; konkrete Einzelprüfungen und das verwendete
+Browserprofil wurden nicht gesondert angegeben.
 
 ## Ursprüngliche Vorlagenhinweise
 
