@@ -65,8 +65,7 @@ export function listCashbookEntries() {
 /**
  * ✅ Kassenbuch Hash-Kette prüfen (Manipulation erkennbar)
  */
-export function verifyCashbookChain() {
-  const entries = listCashbookEntries();
+export function verifyCashbookChain(entries = listCashbookEntries()) {
   let prevHash = "GENESIS";
 
   for (let i = 0; i < entries.length; i++) {

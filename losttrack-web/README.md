@@ -58,6 +58,8 @@ npm.cmd run build
 Die Tests verwenden den eingebauten Node.js-Testläufer und ausschließlich einen
 flüchtigen Testspeicher. Sie prüfen Benutzeranlage, Anmeldung, Änderungen,
 Deaktivierung, Schutz des letzten Admins und die Übernahme bisheriger Konten.
+Zusätzlich werden Sicherung und Wiederherstellung einschließlich ungültiger
+Dateien, Zugriffsrechten, Abmeldung und Zurücksetzen nach Speicherfehlern geprüft.
 Es sind keine zusätzlichen Testpakete erforderlich.
 
 Der Build erzeugt Dateien in `dist`. Ein erfolgreicher Build ersetzt keine
@@ -76,6 +78,7 @@ in anderen Anwendungsbereichen. Eine vollständige Browserprüfung steht noch au
 | Kassenbuch ansehen und drucken | Ja | Ja | Ja |
 | Ein- und Auszahlungen buchen | Ja | Ja | Nein |
 | Benutzer verwalten | Ja | Nein | Nein |
+| Daten sichern und wiederherstellen | Ja | Nein | Nein |
 
 Die bestehende Rollenverteilung wurde beibehalten und ihre Prüfung in den
 Fundsachen-Speicherfunktionen ergänzt. VIEWER sehen Personenangaben als gesperrte
@@ -119,6 +122,74 @@ Die lokale Anmeldung und das bestehende einfache Passwortformat sind weiterhin
 keine produktionsgeeignete Server-Authentifizierung. Die Rechteprüfung schützt
 die vorgesehenen Anwendungsabläufe; der lokale Browserspeicher ist dadurch nicht
 gegen direkte Manipulation geschützt.
+
+## Lokale Sicherung und Wiederherstellung
+
+Diese Funktion benötigt keinen zusätzlichen Server. Sie steht angemeldeten
+ADMIN-Benutzern unter **Einstellungen → Übersicht** zur Verfügung.
+
+### Sicherung herunterladen
+
+1. **Sicherungsdatei herunterladen** wählen.
+2. Im Downloadordner prüfen, dass eine Datei `LostTrack-Sicherung-….json`
+   gespeichert wurde. Der Browser kann je nach Einstellung auch nach dem
+   Speicherort fragen.
+3. Die Datei sicher aufbewahren, möglichst mit einer zusätzlichen Kopie auf einem
+   anderen Datenträger. Regelmäßig und vor einer Wiederherstellung erneut sichern.
+
+Die Sicherung enthält die derzeit unterstützten Geschäftsdaten: definitive
+Fundsachen, Entwürfe, Benutzer samt Passwortprüfwerten, Quittungsdaten innerhalb
+der Fundsachen, Ermittlungsschritte, Kassenbuch, Änderungsprotokolle und beide
+Nummernzähler. Noch vorhandene alte Benutzer- und Entwurfsbestände werden
+ebenfalls mitgesichert. Gedruckte Quittungen oder separat gespeicherte PDF-Dateien
+werden dadurch nicht mitgesichert. Anmeldesitzungen, fremde Browserdaten und
+Entwicklungszeit-Erfassung gehören nicht zur Sicherung.
+
+**Die Datei ist unverschlüsselt und enthält Personendaten sowie Passwortprüfwerte.**
+Nur sicher aufbewahren und an berechtigte Personen weitergeben. Die Datei nicht
+in Git oder GitHub aufnehmen. Git sichert den Programmcode, nicht die Browserdaten.
+Der Download ist manuell; es gibt noch keine automatische regelmäßige Sicherung.
+
+### Sicherung wiederherstellen
+
+1. Den aktuellen Stand herunterladen und prüfen, dass die Datei gespeichert ist.
+2. Andere LostTrack-Tabs und -Fenster schließen und während der Wiederherstellung
+   nicht parallel in LostTrack arbeiten.
+3. Unter **Sicherung wiederherstellen** die gewünschte JSON-Datei auswählen.
+4. Sicherungsdatum und Anzahl der Einträge in der Vorschau prüfen.
+5. Die Bestätigung aktivieren und **Daten jetzt ersetzen** wählen.
+6. Mit einem Konto und Passwort aus dem wiederhergestellten Stand neu anmelden.
+
+**Der Geschäftsdaten- und Benutzerbestand dieses Browsers wird ersetzt, nicht
+zusammengeführt.** Neuere Daten gehen dabei verloren. Die Zugangsdaten aus der
+Sicherung müssen bekannt sein. Es werden nur Sicherungen im unterstützten
+LostTrack-Format bis 25 MB angenommen. Struktur, Pflichtbereiche, Benutzer,
+Nummernzähler und die Kassenbuch-Prüfkette werden vor dem Ersetzen geprüft. Das
+bestätigt keine vertrauenswürdige Herkunft oder vollständige fachliche Richtigkeit.
+
+Bei einem abfangbaren Speicherfehler versucht die Anwendung, den vorherigen
+Datenstand samt Sitzung wieder einzusetzen. Scheitert auch das, zeigt sie eine
+ausdrückliche Fehlermeldung. Dann nicht weiterarbeiten und die vorhandenen
+Sicherungsdateien aufbewahren. Der Browserspeicher bietet für mehrere Datenbereiche
+keine gemeinsame Transaktion; ein Browser- oder Rechnerabsturz während der
+Wiederherstellung kann nicht durch dieses Zurücksetzen abgesichert werden.
+
+### Stand der Prüfung
+
+Automatisch geprüft wurden Export und Wiederherstellung mit Testdaten,
+unveränderte Quittungs-/Protokolldaten, weiterlaufende Nummernzähler, Abmeldung,
+Zugriffsrechte, ungültige Dateien und simulierte Speicherfehler.
+Echte Geschäftsdaten wurden dabei nicht gelesen oder verändert.
+
+Am 25.10.2026 hat der Projektverantwortliche den lokalen Download einer
+Sicherungsdatei im Browser als erfolgreich bestätigt. Dies ist seine Rückmeldung,
+keine vom Entwicklungsagenten selbst ausgeführte Browserprüfung. Die heruntergeladene
+Datei wird nicht in Git aufgenommen.
+
+Die praktische Wiederherstellung ist noch nicht bestätigt. Dafür die Datei in
+einem separaten Browserprofil mit einem leeren LostTrack-Testbestand
+wiederherstellen, neu anmelden und Fundsachen, Quittungsdaten und Kassenbuch
+vergleichen.
 
 ## Ursprüngliche Vorlagenhinweise
 

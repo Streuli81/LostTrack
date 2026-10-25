@@ -25,6 +25,8 @@ export default function Login() {
   return (
     <section style={{ maxWidth: 420, margin: "32px auto" }}>
       <h2>Login</h2>
+      {params.get("restored") === "1" && <p role="status">Die Sicherung wurde wiederhergestellt.
+        Bitte mit einem Konto und Passwort aus der Sicherung anmelden.</p>}
       <p style={{ marginTop: 6, color: "#666" }}>
         Default v1: <b>admin</b> / <b>admin</b>
       </p>
