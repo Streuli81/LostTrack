@@ -1,32 +1,32 @@
 // src/pages/Users.jsx
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   listUsers,
   createUser,
   updateUser,
   deleteUser,
-  setCurrentUserId,
   getCurrentUser,
 } from "../core/storage/userRepo";
 
 const ROLES = ["ADMIN", "EDITOR", "VIEWER"];
 
 export default function Users() {
-  const [tick, setTick] = useState(0);
-
-  const me = useMemo(() => getCurrentUser(), [tick]);
-  const users = useMemo(() => listUsers(), [tick]);
+  const me = getCurrentUser();
+  const [users, setUsers] = useState(() => listUsers());
+  const [passwordUserId, setPasswordUserId] = useState(null);
+  const [newPassword, setNewPassword] = useState("");
 
   const [form, setForm] = useState({
     name: "",
     username: "",
+    password: "",
     role: "EDITOR",
     active: true,
   });
 
   function refresh() {
-    setTick((t) => t + 1);
+    setUsers(listUsers());
   }
 
   function onCreate(e) {
@@ -40,7 +40,7 @@ export default function Users() {
       alert(res.error || "Benutzer konnte nicht erstellt werden.");
       return;
     }
-    setForm({ name: "", username: "", role: "EDITOR", active: true });
+    setForm({ name: "", username: "", password: "", role: "EDITOR", active: true });
     refresh();
   }
 
@@ -63,8 +63,12 @@ export default function Users() {
     refresh();
   }
 
-  function onSwitchUser(id) {
-    setCurrentUserId(id);
+  function onSavePassword(e, id) {
+    e.preventDefault();
+    const res = updateUser(id, { password: newPassword });
+    if (!res.ok) return alert(res.error);
+    setNewPassword("");
+    setPasswordUserId(null);
     refresh();
   }
 
@@ -83,6 +87,9 @@ export default function Users() {
         Empfehlung: <strong>EDITOR</strong> für Sachbearbeiter, <strong>VIEWER</strong>{" "}
         für reine Leserechte, <strong>ADMIN</strong> nur für wenige.
       </p>
+      <p>Zum Benutzerwechsel bitte abmelden und mit dem anderen Konto anmelden.
+        Übernommene Konten ohne Passwort benötigen zuerst ein Passwort.
+        Bei gleichen Benutzernamen erhält das zusätzliche alte Konto den Zusatz „-alt1“ (oder eine höhere Zahl).</p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
         {/* Create */}
@@ -112,6 +119,13 @@ export default function Users() {
                 onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
                 placeholder="z.B. mmuster"
               />
+            </label>
+
+            <label style={{ display: "grid", gap: 6 }}>
+              Passwort
+              <input type="password" required autoComplete="new-password"
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
             </label>
 
             <label style={{ display: "grid", gap: 6 }}>
@@ -182,9 +196,7 @@ export default function Users() {
                         </div>
                       </div>
 
-                      <button onClick={() => onSwitchUser(u.id)} disabled={isMe}>
-                        Als Benutzer nutzen
-                      </button>
+                      {u.needsPassword && <strong>Passwort festlegen</strong>}
                     </div>
 
                     <div
@@ -226,6 +238,10 @@ export default function Users() {
                     </div>
 
                     <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                      <button onClick={() => {
+                        setPasswordUserId(u.id);
+                        setNewPassword("");
+                      }}>Passwort festlegen / ändern</button>
                       <button
                         onClick={() =>
                           onUpdate(u.id, { name: prompt("Name", u.name) || u.name })
@@ -254,6 +270,19 @@ export default function Users() {
                         Löschen
                       </button>
                     </div>
+                    {passwordUserId === u.id && (
+                      <form onSubmit={(e) => onSavePassword(e, u.id)} style={{ marginTop: 10 }}>
+                        <label>Neues Passwort
+                          <input type="password" required autoComplete="new-password"
+                            value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+                        </label>
+                        <button type="submit">Passwort speichern</button>
+                        <button type="button" onClick={() => {
+                          setPasswordUserId(null);
+                          setNewPassword("");
+                        }}>Abbrechen</button>
+                      </form>
+                    )}
                   </div>
                 );
               })}
