@@ -1,5 +1,6 @@
 // src/components/PartyCardEditor.jsx
 import { useEffect, useState } from "react";
+import { hasPermission } from "../core/auth/auth.js";
 
 export default function PartyCardEditor({
   title,
@@ -15,6 +16,7 @@ export default function PartyCardEditor({
   footer = null, // ReactNode
   footerDivider = true, // Divider-Linie zwischen Form und Footer
 }) {
+  const canEdit = hasPermission("ITEM_EDIT");
   const [value, setValue] = useState(empty(showRewardRequested));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -79,6 +81,7 @@ export default function PartyCardEditor({
   }, [title, JSON.stringify(initialValue || {})]);
 
   async function save() {
+    if (!hasPermission("ITEM_EDIT")) return setErr("Keine Berechtigung zum Bearbeiten.");
     setBusy(true);
     setErr("");
     setMsg("");
@@ -98,6 +101,7 @@ export default function PartyCardEditor({
   }
 
   async function clear() {
+    if (!hasPermission("ITEM_EDIT")) return setErr("Keine Berechtigung zum Bearbeiten.");
     if (!allowClear) return;
     if (!window.confirm(`${title} wirklich entfernen?`)) return;
 
@@ -123,6 +127,8 @@ export default function PartyCardEditor({
     <Card title={title}>
       {err ? <Notice kind="error">{err}</Notice> : null}
       {msg ? <Notice kind="ok">{msg}</Notice> : null}
+      {!canEdit && <div>Nur Lesezugriff</div>}
+      <fieldset disabled={!canEdit} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
       {/* ✅ Form optional ausblenden */}
       {!hideForm ? (
@@ -209,7 +215,7 @@ export default function PartyCardEditor({
         </>
       ) : null}
 
-      <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+      {canEdit && <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
         {/* Entfernen nur sinnvoll, wenn Formular sichtbar (sonst ist Abholer=Finder o.ä.) */}
         {allowClear && !hideForm ? (
           <button type="button" onClick={clear} disabled={busy}>
@@ -219,7 +225,9 @@ export default function PartyCardEditor({
         <button type="button" onClick={save} disabled={busy}>
           Speichern
         </button>
-      </div>
+      </div>}
+
+      </fieldset>
 
       {/* ✅ Footer innerhalb der Karte */}
       {footer ? (

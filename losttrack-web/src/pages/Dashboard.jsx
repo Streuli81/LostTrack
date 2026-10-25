@@ -1,6 +1,7 @@
 // src/pages/Dashboard.jsx
 
 import React, { useEffect, useMemo, useState } from "react";
+import { hasPermission } from "../core/auth/auth.js";
 import {
   listDrafts,
   listLostItems,
@@ -262,7 +263,7 @@ export default function Dashboard() {
               )
               .filter(Boolean)
               .join(" • ")
-          : "Commit fehlgeschlagen (Validierung).";
+          : res?.error || "Commit fehlgeschlagen (Validierung).";
 
       setLastError(msg);
       return;
@@ -426,9 +427,9 @@ export default function Dashboard() {
                       flexWrap: "wrap",
                     }}
                   >
-                    <button onClick={() => onCommitDraft(d)}>
+                    {hasPermission("ITEM_CREATE") && <button onClick={() => onCommitDraft(d)}>
                       Commit → definitiv
-                    </button>
+                    </button>}
                     <button
                       onClick={() => {
                         navigator.clipboard?.writeText(String(d.id));

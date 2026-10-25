@@ -2,7 +2,13 @@
 
 import { storage } from "./storage.js";
 import { validateLostItem, VALIDATION_MODE } from "../../domain/lostItem.validators.js";
-import { getCurrentUserName } from "../auth/auth.js";
+import { getCurrentUserName, hasPermission } from "../auth/auth.js";
+
+function permissionDenied(action) {
+  if (hasPermission(action)) return null;
+  const error = "Keine Berechtigung für diesen Vorgang.";
+  return { ok: false, error, errors: { permission: error } };
+}
 
 // ✅ Phase 1: Fristen/Retention (ZH öffentlicher Raum)
 import { calculateRetention, getRetentionStatus } from "../../domain/retention.js";
@@ -124,6 +130,8 @@ export function postCashbookEntry({
   caseWorker = null,
   actor = null,
 } = {}) {
+  const denied = permissionDenied("CASHBOOK_POST");
+  if (denied) return denied;
   const t = String(type || "").toUpperCase();
   if (!(t === "IN" || t === "OUT")) return { ok: false, error: "Invalid type" };
 
@@ -205,6 +213,8 @@ export function payFinderReward({
   actor = null,
   caseWorker = null,
 } = {}) {
+  const denied = permissionDenied("CASHBOOK_POST");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
 
   const item = getLostItemById(id);
@@ -232,6 +242,8 @@ export function receiveOwnerReward({
   actor = null,
   caseWorker = null,
 } = {}) {
+  const denied = permissionDenied("CASHBOOK_POST");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
 
   const current = getLostItemById(id);
@@ -398,6 +410,8 @@ export function searchLostItems(q = {}) {
  * ------------------------------------------------- */
 
 export function changeLostItemStatus({ id, newStatus, actor = null }) {
+  const denied = permissionDenied("ITEM_EDIT");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
   if (!newStatus) return { ok: false, error: "Missing newStatus" };
 
@@ -443,6 +457,8 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
  * ------------------------------------------------- */
 
 export function updateLostItem(input, { actor = null } = {}) {
+  const denied = permissionDenied("ITEM_EDIT");
+  if (denied) return denied;
   const normalizedInput = normalizeFoundAtForValidation(input);
   const { ok, value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.COMMIT });
 
@@ -513,6 +529,8 @@ export function updateLostItem(input, { actor = null } = {}) {
  * ------------------------------------------------- */
 
 export function saveDraft(input, { actor = null } = {}) {
+  const denied = permissionDenied("ITEM_CREATE");
+  if (denied) return denied;
   const normalizedInput = normalizeFoundAtForValidation(input);
   const { value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.DRAFT });
 
@@ -544,6 +562,8 @@ export function saveDraft(input, { actor = null } = {}) {
  * ------------------------------------------------- */
 
 export function commitLostItem(input, { actor = null } = {}) {
+  const denied = permissionDenied("ITEM_CREATE");
+  if (denied) return denied;
   const normalizedInput = normalizeFoundAtForValidation(input);
   const { ok, value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.COMMIT });
   if (!ok) return { ok: false, errors };
@@ -615,6 +635,8 @@ export function commitLostItem(input, { actor = null } = {}) {
  * - "AUCTION" | "SALE" | "RECYCLE" | "DESTROY" | "TRANSFER_TO_MUNICIPAL_ACCOUNT"
  */
 export function disposeLostItem({ id, dispositionType, actor = null } = {}) {
+  const denied = permissionDenied("ITEM_EDIT");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
 
   const current = getLostItemById(id);
@@ -675,6 +697,8 @@ export function createReceipt({
   actor = null,
   notes = null,
 } = {}) {
+  const denied = permissionDenied("RECEIPT_PRINT");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
   if (!receiptType) return { ok: false, error: "Missing receiptType" };
 
@@ -871,6 +895,8 @@ export function printReceipt(params) {
  * ------------------------------------------------- */
 
 export function addInvestigationStep({ id, step, actor = null }) {
+  const denied = permissionDenied("ITEM_EDIT");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
 
   const current = getLostItemById(id);
@@ -913,6 +939,8 @@ export function addInvestigationStep({ id, step, actor = null }) {
 }
 
 export function deleteInvestigationStep({ id, stepId, actor = null }) {
+  const denied = permissionDenied("ITEM_EDIT");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
   if (!stepId) return { ok: false, error: "Missing stepId" };
 
@@ -957,6 +985,8 @@ export function deleteInvestigationStep({ id, stepId, actor = null }) {
  * ------------------------------------------------- */
 
 export function updateFinder({ id, finder, actor = null }) {
+  const denied = permissionDenied("ITEM_EDIT");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
 
   const current = getLostItemById(id);
@@ -991,6 +1021,8 @@ export function updateFinder({ id, finder, actor = null }) {
 }
 
 export function updateOwner({ id, owner, actor = null }) {
+  const denied = permissionDenied("ITEM_EDIT");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
 
   const current = getLostItemById(id);
@@ -1025,6 +1057,8 @@ export function updateOwner({ id, owner, actor = null }) {
 }
 
 export function updateCollector({ id, collector, sameAsFinder = false, actor = null }) {
+  const denied = permissionDenied("ITEM_EDIT");
+  if (denied) return denied;
   if (!id) return { ok: false, error: "Missing id" };
 
   const current = getLostItemById(id);

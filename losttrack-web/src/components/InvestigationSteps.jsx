@@ -1,5 +1,6 @@
 // src/components/InvestigationSteps.jsx
 import { useMemo, useState } from "react";
+import { hasPermission } from "../core/auth/auth.js";
 import {
   addInvestigationStep,
   deleteInvestigationStep,
@@ -17,6 +18,7 @@ function fmtDateTime(iso) {
 }
 
 export default function InvestigationSteps({ itemId, steps, onChanged }) {
+  const canEdit = hasPermission("ITEM_EDIT");
   const [who, setWho] = useState("");
   const [what, setWhat] = useState("");
   const [error, setError] = useState("");
@@ -93,13 +95,13 @@ export default function InvestigationSteps({ itemId, steps, onChanged }) {
               <th style={th}>Datum/Zeit</th>
               <th style={th}>Wer</th>
               <th style={th}>Was</th>
-              <th style={thRight}>Aktion</th>
+              {canEdit && <th style={thRight}>Aktion</th>}
             </tr>
           </thead>
           <tbody>
             {sorted.length === 0 ? (
               <tr>
-                <td style={td} colSpan={4}>
+                <td style={td} colSpan={canEdit ? 4 : 3}>
                   Keine Ermittlungsschritte erfasst.
                 </td>
               </tr>
@@ -109,7 +111,7 @@ export default function InvestigationSteps({ itemId, steps, onChanged }) {
                   <td style={td}>{fmtDateTime(s.at)}</td>
                   <td style={td}>{s.who || "—"}</td>
                   <td style={td}>{s.what || "—"}</td>
-                  <td style={tdRight}>
+                  {canEdit && <td style={tdRight}>
                     <button
                       type="button"
                       onClick={() => handleDelete(s.id)}
@@ -118,7 +120,7 @@ export default function InvestigationSteps({ itemId, steps, onChanged }) {
                     >
                       Löschen
                     </button>
-                  </td>
+                  </td>}
                 </tr>
               ))
             )}
@@ -126,7 +128,7 @@ export default function InvestigationSteps({ itemId, steps, onChanged }) {
         </table>
       </div>
 
-      <form onSubmit={handleAdd} style={{ marginTop: 12 }}>
+      {canEdit && <form onSubmit={handleAdd} style={{ marginTop: 12 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 220px" }}>
             <label style={label}>Wer</label>
@@ -156,7 +158,7 @@ export default function InvestigationSteps({ itemId, steps, onChanged }) {
             </button>
           </div>
         </div>
-      </form>
+      </form>}
     </Card>
   );
 }

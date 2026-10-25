@@ -1,6 +1,6 @@
 // src/domain/lostItem.validators.js
 
-import { normalizeLostItem } from "./lostItem";
+import { normalizeLostItem } from "./lostItem.js";
 
 /**
  * Validation modes

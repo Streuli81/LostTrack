@@ -95,6 +95,11 @@ export default function NewItem() {
     const { value, errors: vErrors } = showErrors(VALIDATION_MODE.DRAFT, data);
 
     const result = saveDraft(value);
+    if (result.ok === false) {
+      setErrors(result.errors || {});
+      setLastMessage(result.error || "Entwurf konnte nicht gespeichert werden.");
+      return;
+    }
     setData(result.item);
     setErrors(result.errors || vErrors || {});
     setLastAction("draft");
@@ -134,6 +139,10 @@ export default function NewItem() {
 
     // ✅ Neu-Commit: Fundnummer verbindlich vergeben (Counter hochzählen)
     const committedFundNo = commitNextFundNumber();
+    if (!committedFundNo) {
+      setLastMessage("Keine Berechtigung zur definitiven Erfassung. Bitte erneut anmelden.");
+      return;
+    }
 
     const withFundNo = {
       ...res.value,

@@ -1,6 +1,7 @@
 // src/components/SideNav.jsx (oder wo diese Datei liegt)
 import { NavLink } from "react-router-dom";
 import { getCurrentUser } from "../core/storage/userRepo";
+import { hasPermission } from "../core/auth/auth.js";
 
 const linkStyle = ({ isActive }) => ({
   display: "block",
@@ -35,9 +36,9 @@ export default function SideNav() {
         <NavLink to="/" style={linkStyle} end>
           Übersicht
         </NavLink>
-        <NavLink to="/neu" style={linkStyle}>
+        {hasPermission("ITEM_CREATE") && <NavLink to="/neu" style={linkStyle}>
           Neue Fundsache
-        </NavLink>
+        </NavLink>}
         <NavLink to="/suche" style={linkStyle}>
           Suche
         </NavLink>

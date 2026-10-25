@@ -1,6 +1,7 @@
 // src/pages/ItemDetail.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { hasPermission } from "../core/auth/auth.js";
 import {
   getLostItemById,
   changeLostItemStatus,
@@ -418,6 +419,8 @@ function toCentsStrict(chfNumber) {
  * --------------------------- */
 
 export default function ItemDetail() {
+  const canEdit = hasPermission("ITEM_EDIT");
+  const canPrintReceipts = hasPermission("RECEIPT_PRINT");
   const { id } = useParams();
   const nav = useNavigate();
   const [tick, setTick] = useState(0);
@@ -714,9 +717,9 @@ export default function ItemDetail() {
             {status}
           </span>
 
-          <button type="button" onClick={() => nav(`/items/${item.id}/bearbeiten`)}>
+          {canEdit && <button type="button" onClick={() => nav(`/items/${item.id}/bearbeiten`)}>
             Bearbeiten
-          </button>
+          </button>}
 
           <button type="button" onClick={onPrintReport}>
             Drucken / PDF (Bericht)
@@ -742,7 +745,7 @@ export default function ItemDetail() {
           <Card title="Workflow">
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {STATUS.map((s) => (
-                <button key={s} type="button" disabled={status === s} onClick={() => setStatus(s)}>
+                <button key={s} type="button" disabled={!canEdit || status === s} onClick={() => setStatus(s)}>
                   Status → {s}
                 </button>
               ))}
@@ -759,7 +762,7 @@ export default function ItemDetail() {
             title="Finder"
             initialValue={item.finder}
             showRewardRequested={true}
-            footer={
+            footer={canPrintReceipts && (
               <div style={{ display: "grid", gap: 8 }}>
                 <div style={footerRow}>
                   <button
@@ -787,7 +790,7 @@ export default function ItemDetail() {
                   Finderlohn (ja/nein) wird automatisch auf der Quittung aufgeführt.
                 </div>
               </div>
-            }
+            )}
             onSave={(finder) => {
               const res = updateFinder({ id: item.id, finder, actor });
               if (res?.ok) refresh();
@@ -798,7 +801,7 @@ export default function ItemDetail() {
           <PartyCardEditor
             title="Eigentümer"
             initialValue={item.owner}
-            footer={
+            footer={canPrintReceipts && (
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={{ fontWeight: 700 }}>Empfangsbestätigung Eigentümer/Abholer</div>
 
@@ -841,7 +844,7 @@ export default function ItemDetail() {
                   </div>
                 </div>
               </div>
-            }
+            )}
             onSave={(owner) => {
               const res = updateOwner({ id: item.id, owner, actor });
               if (res?.ok) refresh();
@@ -854,7 +857,7 @@ export default function ItemDetail() {
             initialValue={collectorIsFinder ? item.finder : item.collector}
             allowClear={!collectorIsFinder}
             hideForm={collectorIsFinder}
-            footer={
+            footer={canPrintReceipts && (
               <div style={{ display: "grid", gap: 12 }}>
                 <div style={{ display: "grid", gap: 8 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1003,7 +1006,7 @@ export default function ItemDetail() {
                   </div>
                 </div>
               </div>
-            }
+            )}
             onSave={(collector) => {
               if (collector === null) {
                 const res = updateCollector({

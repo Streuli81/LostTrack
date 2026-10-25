@@ -1,3 +1,5 @@
+import { hasPermission } from "../core/auth/auth.js";
+
 function pad5(n) {
   return String(n).padStart(5, "0");
 }
@@ -22,6 +24,7 @@ export function previewNextFundNumber() {
  * Diese Funktion nur beim Speichern verwenden.
  */
 export function commitNextFundNumber() {
+  if (!hasPermission("ITEM_CREATE")) return null;
   const year = new Date().getFullYear();
   const storageKey = `losttrack_fundcounter_${year}`;
 

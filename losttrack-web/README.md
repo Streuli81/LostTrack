@@ -64,9 +64,61 @@ Der Build erzeugt Dateien in `dist`. Ein erfolgreicher Build ersetzt keine
 Funktionstests. Die allgemeine ESLint-Prüfung enthält weiterhin bekannte Fehler
 in anderen Anwendungsbereichen. Eine vollständige Browserprüfung steht noch aus.
 
+## Benutzerrollen
+
+| Vorgang | ADMIN | EDITOR | VIEWER |
+| --- | --- | --- | --- |
+| Fundsachen suchen, ansehen und Bericht drucken | Ja | Ja | Ja |
+| Entwürfe speichern und definitiv erfassen | Ja | Ja | Nein |
+| Fundsachen, Status und Personenangaben ändern | Ja | Ja | Nein |
+| Ermittlungsschritte hinzufügen oder löschen | Ja | Ja | Nein |
+| Quittungen erstellen | Ja | Ja | Nein |
+| Kassenbuch ansehen und drucken | Ja | Ja | Ja |
+| Ein- und Auszahlungen buchen | Ja | Ja | Nein |
+| Benutzer verwalten | Ja | Nein | Nein |
+
+Die bestehende Rollenverteilung wurde beibehalten und ihre Prüfung in den
+Fundsachen-Speicherfunktionen ergänzt. VIEWER sehen Personenangaben als gesperrte
+Felder; Speicher- und Quittungsschaltflächen werden ausgeblendet oder gesperrt.
+Die definitive Übernahme eines Entwurfs ist für VIEWER ebenfalls nicht verfügbar.
+Berichtsdruck und Kassenbuchdruck verändern keine Geschäftsdaten und bleiben
+verfügbar. Die technische Zuordnung erlaubt keine Aussage über die rechtlichen
+Voraussetzungen einer Herausgabe oder Verwertung.
+
+Die automatischen Rollentests prüfen sowohl erlaubte als auch abgewiesene
+Schreibvorgänge. Bei einer Abweisung dürfen auch Nummernzähler, Änderungsprotokolle
+und Kassenbuch nicht verändert werden. Abgemeldete und deaktivierte Konten sowie
+unbekannte Rollen werden ebenfalls geprüft.
+
+### Stand der praktischen Browserprüfung
+
+Am 25.10.2026 hat der Projektverantwortliche den zuvor beschriebenen lokalen
+VIEWER-Test im Browser als erfolgreich bestätigt: Suche und Detailansicht sind
+zugänglich, Personenangaben und Status lassen sich nicht ändern, Quittungen und
+definitive Erfassung sind nicht möglich und das Kassenbuch ist einsehbar.
+Dies ist eine Rückmeldung des Projektverantwortlichen, keine vom Entwicklungsagenten
+selbst ausgeführte Browserprüfung.
+
+Die gesonderte Prüfung direkter Erfassungs-/Bearbeitungsadressen sowie die
+vollständigen EDITOR- und ADMIN-Abläufe sind noch nicht als praktisch geprüft
+bestätigt. Die folgende Liste bleibt als ergänzende Prüfanleitung erhalten.
+
+Mit getrennten Testkonten und ausschließlich Testdaten prüfen:
+
+1. Als VIEWER anmelden. Suche, Details, Ermittlungsschritte und Kassenbuch müssen
+   lesbar sein. Änderungen, Quittungen und definitive Erfassung dürfen nicht
+   möglich sein. Auch der direkte Aufruf von `/neu` und einer Bearbeitungsadresse
+   muss verweigert werden.
+2. Als EDITOR anmelden. Test-Fundsache erfassen, ändern und einen Ermittlungsschritt
+   ergänzen. Mit Testbeträgen Quittungs- und Kassenbuchabläufe prüfen. Die
+   Benutzerverwaltung muss verweigert werden.
+3. Als ADMIN anmelden und Benutzerverwaltung sowie dieselben Fundsachenabläufe
+   prüfen.
+
 Die lokale Anmeldung und das bestehende einfache Passwortformat sind weiterhin
-keine produktionsgeeignete Server-Authentifizierung. Die vollständige Durchsetzung
-der Rollenrechte in den Fundsachenabläufen ist ein gesonderter nächster Schritt.
+keine produktionsgeeignete Server-Authentifizierung. Die Rechteprüfung schützt
+die vorgesehenen Anwendungsabläufe; der lokale Browserspeicher ist dadurch nicht
+gegen direkte Manipulation geschützt.
 
 ## Ursprüngliche Vorlagenhinweise
 
