@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { getCatalog, saveCatalog } from "../core/storage/catalogRepo.js";
 import { hasPermission } from "../core/auth/auth.js";
-import { FEE_OPTIONS } from "../domain/workflow.js";
+import { SELECTABLE_FEES, currentFeeCode } from "../domain/workflow.js";
 
 const blankItem = (groupId) => ({ key: "", label: "", groupId, aliases: [], feeCode: "UNSET", active: true });
 
@@ -34,7 +34,7 @@ export default function MasterData() {
   }
   function saveItem(event) {
     event.preventDefault();
-    const entry = { ...item, key: item.key || `custom-${crypto.randomUUID()}`, label: item.label.trim(),
+    const entry = { ...item, feeCode: currentFeeCode(item.feeCode), key: item.key || `custom-${crypto.randomUUID()}`, label: item.label.trim(),
       aliases: [...new Set(aliases.split(/[\n,;]/).map((word) => word.trim()).filter(Boolean))] };
     const items = item.key ? catalog.items.map((row) => row.key === item.key ? entry : row) : [...catalog.items, entry];
     if (persist({ ...catalog, items })) { setItem(entry); setAliases(entry.aliases.join("\n")); }
@@ -72,8 +72,8 @@ export default function MasterData() {
         <textarea name="catalog_aliases" rows={5} value={aliases} onChange={(event) => setAliases(event.target.value)} />
       </label>
       <label>Vorgeschlagene Gemeindegebühr
-        <select aria-label="Gebührenvorschlag" value={item.feeCode} onChange={(event) => setItem({ ...item, feeCode: event.target.value })}>
-          {FEE_OPTIONS.map((fee) => <option key={fee.code} value={fee.code}>{fee.label}</option>)}
+        <select aria-label="Gebührenvorschlag" value={currentFeeCode(item.feeCode)} onChange={(event) => setItem({ ...item, feeCode: event.target.value })}>
+          {SELECTABLE_FEES.map((fee) => <option key={fee.code} value={fee.code}>{fee.label}</option>)}
         </select>
       </label>
       <p>Schlüssel / Schlüsselbund CHF 10.00, Mobiltelefonvermittlung CHF 20.00, übrige Fundsachen gebührenfrei.

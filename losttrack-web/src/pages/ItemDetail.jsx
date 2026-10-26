@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { hasPermission } from "../core/auth/auth.js";
 import { getLostItemById, updateFinder, updateOwner, updateCollector } from "../core/storage/lostItemRepo.js";
 import { getWorkflowSummary } from "../domain/workflow.js";
+import { environmentLabel, isTransportFind, isInstitutionFind, institutionRightsChecked, FUND_REGIMES, fundRegime, legalFinderName, fundReceiptRecipient, finderRewardExcluded, isReferralOnly } from "../domain/captureContext.js";
 import InvestigationSteps from "../components/InvestigationSteps.jsx";
 import PartyCardEditor from "../components/PartyCardEditor.jsx";
 import WorkflowPanel from "../components/WorkflowPanel.jsx";
@@ -71,7 +72,9 @@ function DetailContent({ id }) {
     catch { setError("Der Druckdialog konnte nicht geöffnet werden."); }
   }
   const rewardChoice = item.finder?.rewardChoice || (item.finder?.rewardRequested ? "REQUESTED" : "");
-  const rewardLabel = rewardChoice === "WAIVED" ? "Ausdrücklicher Verzicht" : rewardChoice === "REQUESTED" ? "Finderlohn gewünscht" : "Noch keine ausdrückliche Wahl";
+  const rewardLabel = isReferralOnly(item) ? "Sonderfall – Rechte und Ansprüche noch zu klären"
+    : finderRewardExcluded(item) ? "Haus-/Anstalts- oder ÖV-Fund: Finderlohn gesperrt, kein persönlicher Verzicht"
+    : rewardChoice === "WAIVED" ? "Ausdrücklicher Verzicht" : rewardChoice === "REQUESTED" ? "Finderlohn gewünscht" : "Noch keine ausdrückliche Wahl";
 
   return <section style={{ maxWidth: 1300 }}>
     <style>{printCss}</style>
@@ -85,9 +88,30 @@ function DetailContent({ id }) {
         </div>
       </header>
       {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
+      {item.regime && <Card title="Fundregime und Personenrollen">
+        <Row label="Fundregime" value={FUND_REGIMES.find(([code]) => code === fundRegime(item))?.[1]} />
+        <Row label="Entdecker / Fundperson" value={person(item.finder)} /><Row label="Überbringer" value={fundReceiptRecipient(item)} />
+        <Row label="Rechtlich relevante Finderstelle" value={legalFinderName(item) || "Noch zu prüfen"} />
+      </Card>}
+      {isTransportFind(item) && <section style={card}><strong>ÖV-Fundsache – Weiterleitung an das zuständige Verkehrsunternehmen</strong>
+        <p>Verkehrsunternehmen: {item.origin.operator || "Noch zu klären"}. Keine automatische Übergabe an die VBZ.
+          Die normale Horgner Aufbewahrungs- und Verwertungsfrist wird nicht angewendet. Die Erfassung bestätigt keine Weitergabe.</p></section>}
+      {isInstitutionFind(item) && <Card title="Haus-/Anstaltsfund: Einrichtung und Finderrolle">
+        <Row label="Einrichtung / Betrieb" value={item.institution?.name} /><Row label="Fundort in Einrichtung" value={item.institution?.internalLocation} />
+        <Row label="Überbringer" value={item.institution?.deliveredBy} /><Row label="Übergebende Einrichtung" value={item.institution?.deliveringInstitution} />
+        <Row label="Übergabe an Einrichtung" value={item.institution?.handedToInstitutionDate} /><Row label="Übergabe an Fundbüro" value={item.institution?.handedToOfficeDate} />
+        <Row label="Rechtlich relevante Finderstelle" value={item.institution?.legalFinderName} /><Row label="Kontakt Finderstelle" value={item.institution?.legalFinderContact} />
+        <Row label="Finderzuordnung" value={institutionRightsChecked(item) ? "Fachlich geprüft – siehe Prüfvermerk" : "Noch zu prüfen"} />
+        <Row label="Prüfvermerk" value={item.institution?.reviewNote} />
+        <p>Die ursprüngliche Fundperson ist nicht automatisch berechtigt. Kein Finderlohn; Auslagenersatz separat. Die Übernahme durch das Fundbüro weist niemandem automatisch Eigentum zu.</p>
+      </Card>}
       <div style={columns}>
         <Card title="Gegenstand und Sachbearbeitung">
           <Row label="Gegenstand" value={itemLabel} /><Row label="Beschreibung" value={item.item?.description} />
+          <Row label="Fundumgebung" value={environmentLabel(item)} />
+          {isTransportFind(item) && <><Row label="Verkehrsunternehmen" value={item.origin.operator} />
+            <Row label="Linie / Kurs" value={item.origin.line} /><Row label="Haltestelle / Strecke" value={item.origin.route} />
+            <Row label="Fahrtrichtung" value={item.origin.direction} /><Row label="Fahrzeugnummer" value={item.origin.vehicleNo} /></>}
           <Row label="Kategorie" value={item.item?.category} /><Row label="Marke / Typ" value={[item.item?.brand, item.item?.type].filter(Boolean).join(" / ")} />
           <Row label="Farbe / Zustand" value={[item.item?.color, item.item?.condition].filter(Boolean).join(" / ")} />
           <Row label="Seriennummer" value={item.item?.serialNumber} /><Row label="Geschätzter Wert" value={item.item?.estimatedValueCHF ? `CHF ${Number(item.item.estimatedValueCHF).toFixed(2)}` : "—"} />
@@ -96,6 +120,10 @@ function DetailContent({ id }) {
         </Card>
         <Card title="Aufbewahrung und Finderlohnwahl">
           <Row label="Aufbewahrung ab" value={item.retention?.custodyStartDate} /><Row label="Anzeige / Bekanntmachung" value={item.retention?.noticeDate} />
+          <Row label="Aufbewahrungszeit" value={item.retention?.custodyStartTime} /><Row label="Bekanntmachungszeit" value={item.retention?.noticeTime} />
+          <Row label="Anzeige bei Polizei" value={[item.retention?.reportedDate, item.retention?.reportedTime].filter(Boolean).join(" ")} />
+          <Row label="Eingang Fundbüro" value={[item.retention?.receivedDate, item.retention?.receivedTime].filter(Boolean).join(" ")} />
+          <Row label="Erfassungszeitpunkt" value={dateTime(item.capturedAt || item.createdAt)} />
           <Row label="Prüfdatum Verwertung" value={item.retention?.auctionReviewDate ? dateTime(item.retention.auctionReviewDate) : "Noch ungeklärt"} />
           <Row label="Prüfdatum Findererwerb" value={item.retention?.finderAcquisitionReviewDate ? dateTime(item.retention.finderAcquisitionReviewDate) : "Noch ungeklärt"} />
           <Row label="Finderlohnwahl" value={rewardLabel} />
@@ -103,13 +131,16 @@ function DetailContent({ id }) {
         </Card>
       </div>
       <WorkflowPanel item={item} onChanged={refresh} />
+      {!!item.contents?.length && <Card title="Fundinhalt / Verwahrwerte (keine Gebührenbuchung)">
+        {item.contents.map((row) => <Row key={row.id} label={row.label} value={row.kind === "CASH" ? `CHF ${(row.amountCents / 100).toFixed(2)} · ${row.countConfirmed ? "gezählt" : "Zählung offen"} · ${row.details}` : row.details} />)}
+      </Card>}
       <fieldset disabled={closed} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
         {closed && <p>Der Vorgang ist abgeschlossen. Für weitere Änderungen muss er mit Begründung wieder geöffnet werden.</p>}
         <div style={columns}>
-          <PartyCardEditor title="Finder" initialValue={item.finder} showRewardRequested onSave={(finder) => saveParty(updateFinder, { finder })} />
+          <PartyCardEditor title={isInstitutionFind(item) ? "Ursprüngliche Fundperson" : "Finder"} initialValue={item.finder} showRewardRequested={!isInstitutionFind(item)} onSave={(finder) => saveParty(updateFinder, { finder })} />
           <PartyCardEditor title="Eigentümer" initialValue={item.owner} onSave={(owner) => saveParty(updateOwner, { owner })} />
           <PartyCardEditor title="Abholer" initialValue={item.collectorSameAsFinder ? item.finder : item.collector} allowClear
-            footer={canEdit && <button type="button" onClick={collectorFromFinder}>Finder als Abholer übernehmen</button>}
+            footer={canEdit && !isInstitutionFind(item) && <button type="button" onClick={collectorFromFinder}>Finder als Abholer übernehmen</button>}
             onSave={(collector) => saveParty(updateCollector, { collector, sameAsFinder: false })} />
         </div>
         <details style={{ ...card, marginTop: 16 }}><summary style={{ fontWeight: 700, cursor: "pointer" }}>Ermittlungsschritte ({item.investigationSteps?.length || 0})</summary>
@@ -122,6 +153,10 @@ function DetailContent({ id }) {
       <Row label="Verbleib" value={summary.physicalLabel} /><Row label="Gesamtvorgang" value={summary.overallLabel} />
       <Row label="Funddatum / Zeit" value={`${item.foundAt?.date || "—"} ${item.foundAt?.time || ""}`} /><Row label="Fundort" value={item.foundAt?.location} />
       <Row label="Beschreibung" value={item.item?.description} /><Row label="Finder" value={person(item.finder)} /><Row label="Finderlohnwahl" value={rewardLabel} />
+      <Row label="Fundumgebung" value={environmentLabel(item)} />
+      {isTransportFind(item) && <Row label="Verkehrsunternehmen / Linie" value={[item.origin.operator, item.origin.line].filter(Boolean).join(" / ")} />}
+      {isInstitutionFind(item) && <><Row label="Einrichtung" value={item.institution?.name} /><Row label="Ursprüngliche Fundperson" value={person(item.finder)} />
+        <Row label="Rechtliche Finderstelle (zu prüfen)" value={item.institution?.legalFinderName} /><Row label="Überbringer" value={item.institution?.deliveredBy} /></>}
       <Row label="Eigentümer" value={person(item.owner)} /><Row label="Abholer" value={person(item.collectorSameAsFinder ? item.finder : item.collector)} />
       <Row label="Bemerkungen" value={item.notes} />
       <h3>Zahlungen</h3>{Object.entries(summary.payments).map(([category, payment]) => <Row key={category}

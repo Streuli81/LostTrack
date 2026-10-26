@@ -1,4 +1,6 @@
 import { getCatalog } from "../core/storage/catalogRepo.js";
+import { currentFeeCode } from "./workflow.js";
+import { hasSpecialJurisdiction } from "./captureContext.js";
 
 function searchable(value) {
   return String(value ?? "").toLocaleLowerCase("de-CH")
@@ -17,13 +19,15 @@ export function searchItems(query, catalog = getCatalog()) {
 }
 
 export function catalogFee(key, catalog = getCatalog()) {
-  return catalog.items.find((item) => item.key === key)?.feeCode || "UNSET";
+  return currentFeeCode(catalog.items.find((item) => item.key === key)?.feeCode || "UNSET");
 }
 
 export function selectCatalogItem(data, key, { updateFee = true } = {}) {
   const catalog = getCatalog();
   const entry = catalog.items.find((item) => item.key === key && item.active);
   if (key && !entry) return data;
-  return { ...data, item: { ...data.item, predefinedKey: key, manualLabel: entry?.label || "" },
-    ...(updateFee ? { feeSelection: catalogFee(key, catalog) } : {}) };
+  const context = data.regime && ["idcard", "passport"].includes(key)
+    ? { ...data, regime: { type: "DOCUMENT", source: "CATALOG_REVIEW" } } : data;
+  return { ...context, item: { ...data.item, predefinedKey: key, manualLabel: entry?.label || "" },
+    ...(updateFee ? { feeSelection: hasSpecialJurisdiction(context) ? "UNSET" : catalogFee(key, catalog) } : {}) };
 }

@@ -5,7 +5,7 @@ export const CATALOG_KEY = "losttrack:lostItems.catalog.v1";
 
 function defaultFee(key) {
   if (["keys", "car_key"].includes(key)) return "KEY";
-  if (key === "key_bundle") return "KEY_BUNDLE";
+  if (key === "key_bundle") return "KEY";
   if (key === "phone") return "MOBILE_MEDIATION";
   return ["other", "access_token"].includes(key) ? "UNSET" : "NONE";
 }

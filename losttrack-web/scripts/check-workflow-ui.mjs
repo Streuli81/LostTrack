@@ -3,9 +3,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { log } from "node:console";
+import { Buffer } from "node:buffer";
 
 const targets = await fetch("http://127.0.0.1:9237/json/list").then((response) => response.json());
-const target = targets.find((entry) => entry.type === "page");
+const target = targets.find((entry) => entry.type === "page" && entry.url === "about:blank");
 assert.ok(target, "Separater Testbrowser auf Port 9237 fehlt");
 assert.equal(target.url, "about:blank", "Nur einen frisch gestarteten, leeren Testbrowser verwenden");
 const socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -72,15 +73,50 @@ try {
     localStorage.setItem('losttrack:lostItems.session.v1',JSON.stringify({userId:admin.id})); })()`);
   await send("Page.navigate", { url: "http://127.0.0.1:5199/items/TEST-FALL-01" });
   await wait("document.querySelector('select[aria-label=\"Gebühr für Gegenstand 1\"]') !== null");
-  await evaluate(`(() => {const select=document.querySelector('select[aria-label="Gebühr für Gegenstand 1"]'); select.value='KEY_BUNDLE';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  assert.equal(await evaluate("document.querySelectorAll('input[aria-label^=Anzahl]').length"), 0);
+  assert.equal(await evaluate("document.querySelector('select[aria-label=\"Gebühr für Gegenstand 1\"] option[value=KEY_BUNDLE]')"), null);
+  assert.deepEqual(await evaluate("[...[...document.querySelectorAll('label')].find(e=>e.textContent.startsWith('Schreiben')).querySelector('select').options].map(e=>e.textContent)"),
+    ["Fundquittung", "Herausgabe an Eigentümer", "Herausgabe an Finder"]);
+  await evaluate("window.print=()=>{}");
+  const beforeFund = await business();
+  await fillLabel("Empfänger / zahlende", "TEST Finder Druckprüfung");
+  await click("Quittung vorbereiten und drucken");
+  await wait("!!document.querySelector('#workflow-receipt-print') && [...document.querySelectorAll('button')].some(b=>b.textContent==='Ja, gedruckt und Vorgang tatsächlich erfolgt' && !b.disabled)");
+  assert.equal(await evaluate("document.querySelector('#workflow-receipt-print').parentElement===document.body"), true);
+  assert.equal(await evaluate("document.querySelectorAll('#workflow-receipt-print table').length"), 0);
+  assert.equal(await evaluate("document.querySelector('#workflow-receipt-print').textContent.includes('Finder/in verzichtet freiwillig auf Finderlohn')"), true);
+  const fundPdf = await send("Page.printToPDF", { printBackground: true, preferCSSPageSize: true });
+  const pages = (pdf) => (Buffer.from(pdf.data, "base64").toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length;
+  assert.equal(pages(fundPdf), 1, "Kurze Fundquittung muss genau eine PDF-Seite haben");
+  await click("Abgebrochen / nicht erfolgt");
+  assert.equal(await business(), beforeFund);
+  await fillLabel("Empfänger / zahlende", "TEST langer Inhalt");
+  await evaluate(`(() => {const input=[...document.querySelectorAll('label')].find(e=>e.textContent.startsWith('Bemerkung / Grund')).querySelector('textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,
+      'TEST langer Quittungsinhalt: Diese Beschreibung darf beim Seitenwechsel nicht abgeschnitten werden. '.repeat(120));
+    input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await click("Quittung vorbereiten und drucken");
+  await wait("!!document.querySelector('#workflow-receipt-print') && [...document.querySelectorAll('button')].some(b=>b.textContent==='Ja, gedruckt und Vorgang tatsächlich erfolgt' && !b.disabled)");
+  assert.ok(pages(await send("Page.printToPDF", { printBackground: true, preferCSSPageSize: true })) > 1,
+    "Langer Inhalt muss über mehrere Seiten fliessen können");
+  await click("Abgebrochen / nicht erfolgt");
+  assert.equal(await business(), beforeFund);
+  await evaluate(`(() => {const select=document.querySelector('select[aria-label="Gebühr für Gegenstand 1"]'); select.value='KEY';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   await fillLabel("Auslagenersatz gesamt", "0.00");
   await click("Plan speichern");
   await wait("JSON.parse(localStorage.getItem('losttrack:lostItems.records.v1')).find(i=>i.id==='TEST-FALL-01').workflow?.payments.FEE.dueCents === 1000");
+  await fillLabel("Schreiben", "FINDER_HANDOVER");
+  await fillLabel("Empfänger / zahlende", "TEST Finder");
+  await click("Quittung vorbereiten und drucken");
+  await wait("!!document.querySelector('#workflow-receipt-print') && [...document.querySelectorAll('button')].some(b=>b.textContent==='Ja, gedruckt und Vorgang tatsächlich erfolgt' && !b.disabled)");
+  assert.equal(pages(await send("Page.printToPDF", { printBackground: true, preferCSSPageSize: true })), 1,
+    "Kurze Finder-Herausgabequittung muss genau eine PDF-Seite haben");
+  await click("Abgebrochen / nicht erfolgt");
   await evaluate("window.__testPrintCalls=0; window.print=()=>{window.__testPrintCalls++}");
   const baseline = await business();
   async function prepare() {
+    await fillLabel("Schreiben", "OWNER_HANDOVER");
     await fillLabel("Empfänger / zahlende", "TEST Empfänger Browserprüfung");
-    await fillLabel("TEST 01", "1");
     await fillLabel("Gebühren – Einnahme heute", "10.00");
     await click("Quittung vorbereiten und drucken");
     await wait("[...document.querySelectorAll('button')].some(b=>b.textContent==='Ja, gedruckt und Vorgang tatsächlich erfolgt' && !b.disabled)");
@@ -90,6 +126,7 @@ try {
   assert.equal(await evaluate("window.__testPrintCalls"), 1);
   const pdf = await send("Page.printToPDF", { printBackground: true, preferCSSPageSize: true });
   assert.ok(pdf.data.length > 15000, "Quittungs-PDF darf nicht leer sein");
+  assert.equal(pages(pdf), 1, "Kurze Herausgabequittung muss genau eine PDF-Seite haben");
   await click("Abgebrochen / nicht erfolgt");
   assert.equal(await business(), baseline, "Abbruch darf nichts speichern");
   await prepare();
@@ -106,6 +143,17 @@ try {
   await fillLabel("Begründung für die Wiederöffnung", "TEST erneute Prüfung");
   await click("Vorgang wieder öffnen");
   await wait("JSON.parse(localStorage.getItem('losttrack:lostItems.records.v1')).find(i=>i.id==='TEST-FALL-01').workflow.closedAt === null");
+  await evaluate(`(async()=>{const {normalizeWorkflow}=await import('/src/domain/workflow.js');
+    const key='losttrack:lostItems.records.v1';const records=JSON.parse(localStorage.getItem(key));
+    const item=records.find(i=>i.id==='TEST-FALL-02');item.workflow=undefined;item.status='OPEN';item.feeSelection='NONE';
+    item.workflow=normalizeWorkflow(item);item.workflow.parts[0].quantity=3;localStorage.setItem(key,JSON.stringify(records));})()`);
+  await send("Page.navigate", { url: "http://127.0.0.1:5199/items/TEST-FALL-02" });
+  await wait("!!document.querySelector('select[aria-label=\"Gebühr für Gegenstand 1\"]')");
+  assert.equal(await evaluate("document.querySelectorAll('input[type=number]').length"), 0);
+  await fillLabel("Auslagenersatz gesamt", "0.00");
+  await click("Plan speichern");
+  assert.equal(await evaluate("JSON.parse(localStorage.getItem('losttrack:lostItems.records.v1')).find(i=>i.id==='TEST-FALL-02').workflow.parts[0].quantity"), 3,
+    "Alte Mehrfachmengen müssen ohne Mengenfeld erhalten bleiben");
   await evaluate(`(() => { const viewer=JSON.parse(localStorage.getItem('losttrack:lostItems.users.v2')).find(u=>u.username==='viewer');
     localStorage.setItem('losttrack:lostItems.session.v1',JSON.stringify({userId:viewer.id})); })()`);
   await send("Page.reload");
@@ -113,7 +161,7 @@ try {
   assert.equal(await evaluate("[...document.querySelectorAll('button')].some(b=>b.textContent==='Plan speichern' || b.textContent==='Quittung vorbereiten und drucken')"), false);
   assert.equal(exceptions.length, 0, exceptions.join("; "));
   log("Oberflächentest in separatem Edge-Profil erfolgreich: Gebührenplan, PDF, Druckabbruch, bestätigte Herausgabe/Zahlung, Abschluss, Nachdruck, Wiederöffnung und VIEWER.");
-  log("Druckaufruf simuliert; kein physischer Papierdruck geprüft. Keine echten Browserdaten verwendet.");
+  log("Fundquittung ohne Betragstabellen und mit Finderlohnverzicht sowie Herausgabequittung jeweils als einseitiges A4-PDF geprüft. Druckaufruf simuliert; kein physischer Papierdruck geprüft. Keine echten Browserdaten verwendet.");
 } finally {
   await send("Browser.close").catch(() => {});
   socket.close();

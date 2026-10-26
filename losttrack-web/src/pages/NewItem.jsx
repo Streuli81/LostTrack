@@ -3,9 +3,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { previewNextFundNumber, commitNextFundNumber } from "../utils/fundNumber";
 import { createEmptyLostItem } from "../domain/lostItem";
-import { FEE_OPTIONS } from "../domain/workflow.js";
+import { SELECTABLE_FEES, currentFeeCode } from "../domain/workflow.js";
 import ItemCatalogSelect from "../components/ItemCatalogSelect.jsx";
-import { selectCatalogItem } from "../domain/itemCatalog.js";
+import { selectCatalogItem, catalogFee } from "../domain/itemCatalog.js";
+import { getCurrentUser } from "../core/auth/auth.js";
+import { linkCustodyToNotice, hasSpecialJurisdiction, isInstitutionFind, finderRewardExcluded, isReferralOnly, separateDateFields } from "../domain/captureContext.js";
+import CaptureContextFields from "../components/CaptureContextFields.jsx";
+import FoundContents from "../components/FoundContents.jsx";
 
 import {
   saveDraft,
@@ -33,7 +37,15 @@ function NewItemForm({ recordId, draftId }) {
     const existing = recordId ? getLostItemById(recordId) : draftId ? getDraftById(draftId) : null;
     if ((recordId || draftId) && !existing) return { missing: true, data: createEmptyLostItem(), preview: "" };
     const preview = recordId ? existing.fundNo : previewNextFundNumber();
-    const value = existing ? normalizeLostItemDates(existing) : { ...createEmptyLostItem(), id: crypto.randomUUID() };
+    const user = getCurrentUser();
+    const empty = createEmptyLostItem();
+    const value = existing ? normalizeLostItemDates(existing) : { ...empty, id: crypto.randomUUID(),
+      captureVersion: 1, capturedAt: empty.createdAt, origin: { type: "", operator: "", line: "", route: "", direction: "", vehicleNo: "" },
+      regime: { type: "", source: "ENVIRONMENT" }, roles: { delivererSameAsDiscoverer: true, legalFinderSameAsDiscoverer: true },
+      caseWorker: { id: user.id, name: user.name || user.username },
+      retention: { ...empty.retention, custodyBasis: "MANUAL_SEPARATE", dateModel: "SEPARATE", noticeTime: "", custodyStartTime: "",
+        reportedDate: "", reportedTime: "", receivedDate: "", receivedTime: "", finderBasis: "" } };
+    if (draftId && value.captureVersion === 1) value.caseWorker = { id: user.id, name: user.name || user.username };
     return { missing: false, data: { ...value, fundNo: preview,
       ...(!recordId ? { feeSelection: value.feeSelection || "UNSET" } : {}) }, preview };
   });
@@ -44,7 +56,23 @@ function NewItemForm({ recordId, draftId }) {
 
   // Helper: Feld-Updates (einfach & stabil)
   function setField(path, value) {
-    setData((prev) => setByPath(prev, path, value));
+    setData((prev) => {
+      let next = setByPath(prev, path, value);
+      if (path === "regime.type") {
+        next = setByPath(next, "regime.source", "MANUAL");
+        if (!next.origin?.type) next = setByPath(next, "origin.type", ({ NORMAL: "PUBLIC_GROUND", HOUSE: "BUILDING", TRANSPORT: "PUBLIC_TRANSPORT" })[value] || "OTHER");
+      }
+      if (path === "origin.type" && next.regime?.source === "ENVIRONMENT") next = setByPath(next, "regime.type",
+        ({ PUBLIC_GROUND: "NORMAL", BUILDING: "HOUSE", PUBLIC_TRANSPORT: "TRANSPORT" })[value] || "REVIEW");
+      if (path === "retention.noticeDate" && next.retention.custodyBasis === "NOTICE_USER_POLICY") {
+        next = setByPath(next, "retention.noticeType", value ? "PUBLIC_ANNOUNCEMENT" : "");
+      }
+      if (["origin.type", "regime.type"].includes(path) && !isEditMode) next.feeSelection = hasSpecialJurisdiction(next) ? "UNSET" : catalogFee(next.item.predefinedKey);
+      if (["origin.type", "regime.type", "institution.name", "institution.legalFinderName"].includes(path) && next.institution) {
+        next = setByPath(next, "institution.legalFinderConfirmed", false);
+      }
+      return linkCustodyToNotice(next);
+    });
   }
 
   function showErrors(mode, current) {
@@ -178,109 +206,8 @@ function NewItemForm({ recordId, draftId }) {
         </div>
       </div>
 
-      {/* Sachbearbeiter */}
-      <Field label="Sachbearbeiter-ID" error={err("caseWorker.id")}>
-        <input
-          type="text"
-          value={data.caseWorker.id}
-          onChange={(e) => setField("caseWorker.id", e.target.value)}
-          style={inputStyle(!!err("caseWorker.id"))}
-          placeholder='z.B. "3xxx"'
-          autoComplete="off"
-          name="caseworker_id"
-        />
-      </Field>
-
-      <Field label="Sachbearbeiter-Name" error={err("caseWorker.name")}>
-        <input
-          type="text"
-          value={data.caseWorker.name}
-          onChange={(e) => setField("caseWorker.name", e.target.value)}
-          style={inputStyle(!!err("caseWorker.name"))}
-          placeholder='z.B. "M. Streuli"'
-          autoComplete="off"
-          name="caseworker_name"
-        />
-      </Field>
-
-      {/* Fundort/-zeit */}
-      <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 12 }}>
-        <Field label="Funddatum" error={err("foundAt.date")}>
-          <input
-            type="text"
-            value={data.foundAt.date}
-            onChange={(e) => setField("foundAt.date", e.target.value)}
-            onBlur={(e) => {
-              const normalized = normalizeDate(e.target.value);
-              setField("foundAt.date", normalized);
-            }}
-            style={inputStyle(!!err("foundAt.date"))}
-            placeholder="01.01.2026"
-            autoComplete="off"
-            name="found_date"
-          />
-        </Field>
-
-        <Field label="Fundzeit" error={err("foundAt.time")}>
-          <input
-            type="text"
-            value={data.foundAt.time}
-            onChange={(e) => setField("foundAt.time", e.target.value)}
-            onBlur={(e) => {
-              const normalized = normalizeTime(e.target.value);
-              setField("foundAt.time", normalized);
-            }}
-            style={inputStyle(!!err("foundAt.time"))}
-            placeholder="14.30"
-            autoComplete="off"
-            name="found_time"
-          />
-        </Field>
-      </div>
-
-      <h3 style={{ marginTop: 18, marginBottom: 6 }}>Fristdaten nach ZGB</h3>
-      <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 10 }}>
-        Das Funddatum löst diese Fristen nicht automatisch aus. Erfasse die tatsächliche Übernahme in die Aufbewahrung
-        sowie das Datum der Anzeige oder Bekanntmachung.
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Beginn der Aufbewahrung (Art. 721 ZGB)" error={err("retention.custodyStartDate")}>
-          <input
-            type="text"
-            value={data.retention.custodyStartDate}
-            onChange={(e) => setField("retention.custodyStartDate", e.target.value)}
-            onBlur={(e) => setField("retention.custodyStartDate", normalizeDate(e.target.value))}
-            style={inputStyle(!!err("retention.custodyStartDate"))}
-            placeholder="TT.MM.JJJJ"
-            autoComplete="off"
-            name="retention_custody_start_date"
-          />
-        </Field>
-        <Field label="Datum Anzeige/Bekanntmachung (Art. 722 ZGB)" error={err("retention.noticeDate")}>
-          <input
-            type="text"
-            value={data.retention.noticeDate}
-            onChange={(e) => setField("retention.noticeDate", e.target.value)}
-            onBlur={(e) => setField("retention.noticeDate", normalizeDate(e.target.value))}
-            style={inputStyle(!!err("retention.noticeDate"))}
-            placeholder="TT.MM.JJJJ"
-            autoComplete="off"
-            name="retention_notice_date"
-          />
-        </Field>
-        <Field label="Grundlage des Fristbeginns" error={err("retention.noticeType")}>
-          <select
-            value={data.retention.noticeType}
-            onChange={(e) => setField("retention.noticeType", e.target.value)}
-            style={inputStyle(!!err("retention.noticeType"))}
-            name="retention_notice_type"
-          >
-            <option value="">Bitte auswählen</option>
-            <option value="POLICE_REPORT">Anzeige bei der Polizei</option>
-            <option value="PUBLIC_ANNOUNCEMENT">Öffentliche Bekanntmachung</option>
-          </select>
-        </Field>
-      </div>
+      <CaptureContextFields data={data} setField={setField} errors={errors}
+        normalizeDate={normalizeDate} normalizeTime={normalizeTime} onSeparateDates={() => setData(separateDateFields)} />
 
       <Field label="Fundort (Freitext)" error={err("foundAt.location")}>
         <input
@@ -295,7 +222,7 @@ function NewItemForm({ recordId, draftId }) {
       </Field>
 
       {/* Finder */}
-      <h3 style={{ marginTop: 18, marginBottom: 8 }}>Finder</h3>
+      <h3 style={{ marginTop: 18, marginBottom: 8 }}>{isInstitutionFind(data) ? "Ursprüngliche Fundperson (keine automatische Finderberechtigung)" : "Finder"}</h3>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Field label="Vorname" error={err("finder.firstName")}>
@@ -395,7 +322,7 @@ function NewItemForm({ recordId, draftId }) {
         />
       </Field>
 
-      <fieldset
+      {finderRewardExcluded(data) || isReferralOnly(data) ? <p>Keine persönliche Finderlohnwahl in diesem Fundregime. Bei Haus-/Anstalts- und ÖV-Funden ist Finderlohn gesperrt; bei Sonderfällen bleibt die rechtliche Behandlung offen. Dies ist kein persönlicher Verzicht der Fundperson.</p> : <fieldset
         aria-describedby={err("finder.rewardChoice") ? "finder-reward-choice-error" : undefined}
         style={{
           border: err("finder.rewardChoice") ? "1px solid #b00020" : "1px solid rgba(0,0,0,0.2)",
@@ -436,7 +363,7 @@ function NewItemForm({ recordId, draftId }) {
             {err("finder.rewardChoice")}
           </div>
         ) : null}
-      </fieldset>
+      </fieldset>}
 
       {/* Gegenstand */}
       <h3 style={{ marginTop: 18, marginBottom: 8 }}>Gegenstand</h3>
@@ -473,16 +400,19 @@ function NewItemForm({ recordId, draftId }) {
         />
       </Field>
 
+      <FoundContents data={data} onChange={(contents) => setField("contents", contents)} />
+      {err("contents") && <p role="alert">{err("contents")}</p>}
       {!isEditMode && <Field label="Gemeindegebühr für diese Sache" error={err("feeSelection")}>
-        <select aria-label="Gemeindegebühr für diese Sache" value={data.feeSelection || "UNSET"} onChange={(event) => setField("feeSelection", event.target.value)} style={inputStyle(false)}>
-          {FEE_OPTIONS.map((fee) => <option key={fee.code} value={fee.code}>{fee.label}</option>)}
+        {hasSpecialJurisdiction(data) && <p>Besondere Fundumgebung: Die kommunale Gebühr wird nicht automatisch vorgeschlagen. Zuständigkeit und Gebühren vor einer Herausgabe gesondert prüfen; keine fremden Tarife übernehmen.</p>}
+        <select aria-label="Gemeindegebühr für diese Sache" value={currentFeeCode(data.feeSelection || "UNSET")} onChange={(event) => setField("feeSelection", event.target.value)} style={inputStyle(false)}>
+          {SELECTABLE_FEES.map((fee) => <option key={fee.code} value={fee.code}>{fee.label}</option>)}
         </select>
         <p>Die Gegenstandsauswahl schlägt die Gebühr automatisch vor: Schlüssel oder ganzer Schlüsselbund CHF 10.00,
           Mobiltelefonvermittlung CHF 20.00, übrige bestimmte Fundsachen gebührenfrei.
           Bei Mobiltelefonen gilt der Betrag für die Vermittlung. Falls keine Vermittlung erfolgt, die Auswahl auf gebührenfrei ändern.
           Die Auswahl allein bestätigt keine Vermittlung und bucht keine Zahlung.
           Finderlohn und Auslagenersatz werden später getrennt festgelegt.
-          Mehrere Gegenstände und Mengen kannst du nach der Erfassung im Ablauf ergänzen.</p>
+          Weitere Gegenstände kannst du nach der Erfassung im Ablauf ergänzen.</p>
       </Field>}
 
       {/* Buttons */}

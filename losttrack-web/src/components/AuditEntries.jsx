@@ -15,6 +15,9 @@ function display(value) {
     if (value.blockedReason) states.push(`Gesperrt: ${value.blockedReason}`);
     if (value.decisionOpen) states.push("Fachliche Entscheidung offen");
     if (value.closedAt) states.push(`Abgeschlossen am ${dateTime(value.closedAt)}`);
+    if (value.expensePayee) states.push(`Auslagenanspruchsteller: ${value.expensePayee.name || "ungeklärt"}; Grundlage ${value.expensePayee.basis}; bestätigt ${value.expensePayee.confirmed ? "ja" : "nein"}; ${value.expensePayee.note || ""}`);
+    if (value.disposalProceedsCents !== undefined) states.push(`Gesonderter Verwertungserlös CHF ${(value.disposalProceedsCents / 100).toFixed(2)}`);
+    if (value.finderRightsReview) states.push(`Finder-/Eigentumsprüfung: ${value.finderRightsReview.confirmed ? "bestätigt" : "offen"}; ${value.finderRightsReview.note || ""}`);
     return states.join(" · ");
   }
   if (typeof value === "object") return JSON.stringify(value);
@@ -33,6 +36,20 @@ const events = {
   WORKFLOW_DISPOSITION_RECORDED: "Freigegebene Verwertung dokumentiert",
 };
 const pathNames = {
+  "regime.type": "Fundregime", "roles.delivererName": "Überbringer", "roles.legalFinderName": "Rechtlicher Finder",
+  "expenseClaims": "Auslagenanmeldungen und Entscheidungen", "contents": "Fundinhalt / Verwahrwerte",
+  "retention.reportedDate": "Anzeige bei Polizei – Datum", "retention.reportedTime": "Anzeige bei Polizei – Zeit",
+  "retention.receivedDate": "Eingang Fundbüro – Datum", "retention.receivedTime": "Eingang Fundbüro – Zeit",
+  "retention.finderBasis": "Grundlage der Finderfrist",
+  "institution.name": "Einrichtung", "institution.internalLocation": "Fundort innerhalb der Einrichtung",
+  "institution.legalFinderName": "Rechtlich relevante Finderstelle", "institution.legalFinderConfirmed": "Finderzuordnung fachlich geprüft",
+  "institution.deliveredBy": "Überbringer", "institution.deliveringInstitution": "Übergebende Einrichtung",
+  "institution.reviewNote": "Prüfvermerk Finderzuordnung", "institution.handedToInstitutionDate": "Übergabe an Einrichtung",
+  "institution.handedToOfficeDate": "Übergabe an Fundbüro",
+  "institution.legalFinderContact": "Kontakt Finderstelle", "institution.intakeSource": "Eingang von Person / Einrichtung",
+  "origin.type": "Fundumgebung", "origin.operator": "Verkehrsunternehmen", "origin.line": "Linie / Kurs",
+  "origin.route": "Haltestelle / Strecke", "origin.direction": "Fahrtrichtung", "origin.vehicleNo": "Fahrzeugnummer",
+  "capturedAt": "Erfassungszeitpunkt", "retention.noticeTime": "Bekanntmachungszeit", "retention.custodyStartTime": "Aufbewahrungszeit",
   "status": "Verbleib", "foundAt.date": "Funddatum", "foundAt.time": "Fundzeit", "foundAt.location": "Fundort",
   "item.manualLabel": "Gegenstand", "item.description": "Beschreibung", "caseWorker.name": "Sachbearbeitung",
   "finder.rewardChoice": "Finderlohnwahl", "finder.rewardRequested": "Finderlohn gewünscht",

@@ -100,7 +100,7 @@ try {
   await choose("Browseralias", "Browser-Testgegenstand");
   assert.equal(await fee(), "NONE");
   for (const [query, label, code] of [["Natel", "Mobiltelefon", "MOBILE_MEDIATION"], ["Foular", "Halstuch", "NONE"],
-    ["Schluesselbund", "Schlüsselbund", "KEY_BUNDLE"], ["Hausschlüssel", "Einzelner Schlüssel", "KEY"]]) {
+    ["Schluesselbund", "Schlüsselbund", "KEY"], ["Hausschlüssel", "Einzelner Schlüssel", "KEY"]]) {
     await choose(query, label);
     assert.equal(await evaluate("document.querySelector('#item-catalog-search').value"), label);
     assert.equal(await fee(), code);
@@ -129,8 +129,8 @@ try {
   await send("Page.navigate", { url: `http://127.0.0.1:5199/entwuerfe/${draft.id}/bearbeiten` });
   await wait("document.querySelector('#item-catalog-search')?.value === 'Mobiltelefon'");
   assert.equal(await fee(), "MOBILE_MEDIATION");
-  for (const [name, value] of [["caseworker_id", "TEST"], ["caseworker_name", "Katalogtest"],
-    ["found_date", "26.10.2026"], ["found_time", "10.00"], ["found_location", "Testort"],
+  await field("[name=origin_type]", "PUBLIC_GROUND");
+  for (const [name, value] of [["found_date", "26.10.2026"], ["found_time", "10.00"], ["found_location", "Testort"],
     ["finder_firstName", "Testfinder"]]) await field(`[name="${name}"]`, value);
   await evaluate("document.querySelector('input[name=finder_reward_choice][value=WAIVED]').click()");
   await click("Definitiv erfassen");

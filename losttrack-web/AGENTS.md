@@ -52,6 +52,33 @@ Test mit simuliertem window.print ableiten.
 
 ## Bestätigte technische Bestandsaufnahme
 
+Aktuelle Vorgaben vom 26.10.2026 (ersetzen die frühere Kopplung): Neue Fälle
+erfassen Fund, Anzeige, Bekanntmachung, Eingang und tatsächlichen Aufbewahrungsbeginn
+getrennt. Anzeige/Bekanntmachung als Grundlage der Finderfrist bewusst wählen.
+Alte Daten nicht rückwirkend umdatieren; eine explizite Umstellung ist möglich.
+Tierfunde, amtliche Dokumente und gefährliche Gegenstände sind vorerst nur
+Sonderfall-Erfassungen ohne normale Herausgabe/Verwertung/Fristenautomatik.
+Fundperson, Überbringer und rechtlicher Finder unterscheiden. Auslagen nur anmelden,
+prüfen und über tatsächlich bestätigte Belege als bezahlt kennzeichnen. Verwahrtes
+Fundbargeld und Verwertungserlöse nie automatisch als Gebühren/Finderlohn buchen.
+Weitere Grenzen: [docs/FUNDREGIME-AUSLAGEN-UND-FUNDWERTE.md](docs/FUNDREGIME-AUSLAGEN-UND-FUNDWERTE.md).
+
+Haus-/Anstaltsfunde (26.10.2026): Fundperson/Überbringer und rechtlich relevante
+Finderstelle getrennt behandeln. Auf ausdrückliche Bestätigung des Projektverantwortlichen
+sind neue Finderlohnforderungen und -zahlungen für diese Fundart gesperrt; dies
+ist kein persönlicher Verzicht. Auslagenersatz bleibt separat. Keine automatische
+Finderrechts- oder Eigentumszuordnung; Finderherausgabe benötigt manuelle
+Zuordnungs-/Berechtigungsprüfung mit Prüfvermerk. Historische Buchungen erhalten.
+Details: [docs/HAUS-UND-ANSTALTSFUNDE.md](docs/HAUS-UND-ANSTALTSFUNDE.md).
+
+Neue Erfassung (26.10.2026): Sachbearbeitung und Erfassungszeitpunkt automatisch;
+die zunächst bestätigte Kopplung des Aufbewahrungsbeginns an die Bekanntmachung
+wurde durch die spätere Bestätigung getrennter Zeitpunkte ersetzt (siehe oben).
+Dies ist keine rechtliche Freigabe. Fundumgebung und ÖV-Angaben werden separat gespeichert.
+ÖV-/andere besondere Fundumgebungen erhalten keine pauschalen kommunalen
+Prüfgrenzen. Altbestandsdaten nicht rückwirkend koppeln. Details und offene Fragen:
+[docs/ERFASSUNG-UND-FUNDUMGEBUNG.md](docs/ERFASSUNG-UND-FUNDUMGEBUNG.md).
+
 Stand der Quellcodeprüfung: 25.10.2026. Bei Folgeaufgaben den aktuellen Code erneut berücksichtigen; diese Bestandsaufnahme ist keine dauerhafte Funktionsgarantie.
 
 - Projektverzeichnis: `C:\Dev\LostTrack\losttrack-web`. Das Git-Hauptverzeichnis liegt eine Ebene darüber in `C:\Dev\LostTrack`.

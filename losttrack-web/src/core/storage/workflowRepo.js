@@ -2,6 +2,8 @@ import { storage } from "./storage.js";
 import { getLostItemById, computeLedgerHash, verifyCashbookChain } from "./lostItemRepo.js";
 import { hasPermission, getCurrentUserName } from "../auth/auth.js";
 import { normalizeWorkflow, getWorkflowSummary, validateWorkflowPlan, validateStoredWorkflow } from "../../domain/workflow.js";
+import { isInstitutionFind, institutionRightsChecked, finderRewardExcluded, isReferralOnly, fundRegime, legalFinderName } from "../../domain/captureContext.js";
+import { ownerReturnConfirmed } from "../../domain/expenseClaims.js";
 
 const RECORDS = "lostItems.records.v1";
 const AUDIT = "lostItems.audit.v1";
@@ -25,6 +27,26 @@ function load(id, { closedAllowed = false } = {}) {
   if (!check.ok) throw new Error(check.error);
   if (!closedAllowed && item.workflow?.closedAt) throw new Error("Der Vorgang ist abgeschlossen. Bitte zuerst mit Begründung wieder öffnen.");
   return item;
+}
+function checkInstitutionAction(item, kind, documentKind, payments, recipient, reason = "") {
+  if (isReferralOnly(item) && kind !== "FUND") throw new Error("Sonderfall: zuerst zuständige Stelle und verbindlichen Spezialablauf klären. Keine normale Herausgabe oder Zahlung.");
+  if (finderRewardExcluded(item) && payments.some((line) => line.category === "REWARD")) throw new Error("Finderlohn ist bei Haus-/Anstalts- und ÖV-Funden gesperrt.");
+  if (item.regime) for (const line of payments) {
+    if (line.category === "REWARD" && !ownerReturnConfirmed(item) && kind !== "OWNER_HANDOVER") throw new Error("Finderlohn wird nicht bei Annahme oder Fristablauf ausgezahlt; eine dokumentierte Rückgabe an den Eigentümer fehlt.");
+    if (line.category === "REWARD" && line.type === "OUT" && (!legalFinderName(item) || recipient !== legalFinderName(item) && !String(reason).trim())) throw new Error("Rechtlichen Finder bestimmen; bei abweichendem Zahlungsempfänger die Vertretung/Berechtigung im Grund dokumentieren.");
+    if (line.category === "EXPENSES" && line.type === "OUT") {
+      const payee = item.workflow?.expensePayee;
+      if (!payee?.confirmed || !payee.name?.trim() || !payee.note?.trim() || recipient !== payee.name) throw new Error("Auslagenzahlung: bestätigten Anspruchsteller und passenden Empfänger prüfen.");
+      if (payee.basis === "FINDER_LAW" && !ownerReturnConfirmed(item)) throw new Error("Auslagen aus Finderrecht: die bestätigte Eigentümerrückgabe fehlt.");
+    }
+  }
+  if (item.regime && fundRegime(item) === "NORMAL" && kind === "FINDER_HANDOVER" && (!item.workflow?.finderRightsReview?.confirmed || !item.workflow.finderRightsReview.note?.trim())) {
+    throw new Error("Herausgabe an Finder ist keine Finderlohnzahlung. Voraussetzungen eines Finder-/Eigentumsanspruchs mit dokumentierter Entscheidung gesondert prüfen; ein Fristablauf allein genügt nicht.");
+  }
+  if (!isInstitutionFind(item)) return;
+  if (payments.some((line) => line.category === "REWARD")) throw new Error("Finderlohnzahlungen sind bei Haus-/Anstaltsfunden gesperrt. Kein persönlicher Verzicht erforderlich.");
+  if ((kind === "FINDER_HANDOVER" || documentKind === "FINDER_HANDOVER" || payments.some((line) => line.category === "EXPENSES" && line.type === "OUT")) &&
+      !institutionRightsChecked(item)) throw new Error("Bitte zuerst die rechtlich relevante Finderstelle und die Berechtigung mit Prüfvermerk bestätigen. Die Fundperson ist nicht automatisch berechtigt.");
 }
 
 function auditSnapshot(item) {
@@ -68,7 +90,13 @@ function persist(before, after, type, { ledger = null, detail = {} } = {}) {
 
 function printSnapshot(item) {
   return clone({ id: item.id, fundNo: item.fundNo, item: item.item, foundAt: item.foundAt,
-    caseWorker: item.caseWorker, finder: item.finder, owner: item.owner, collector: item.collector });
+    caseWorker: item.caseWorker, finder: item.finder, owner: item.owner, collector: item.collector,
+    ...(item.origin !== undefined ? { origin: item.origin } : {}),
+    ...(item.institution !== undefined ? { institution: item.institution } : {}),
+    ...(item.roles !== undefined ? { roles: item.roles } : {}),
+    ...(item.regime !== undefined ? { regime: item.regime } : {}),
+    ...(item.contents !== undefined ? { contents: item.contents } : {}),
+    ...(item.capturedAt !== undefined ? { capturedAt: item.capturedAt } : {}) });
 }
 
 function selectedParts(workflow, selections, kind) {
@@ -131,11 +159,15 @@ export function saveWorkflowPlan({ id, ...plan }) {
   } catch (err) { return failure(err.message); }
 }
 
-export function prepareWorkflowReceipt({ id, kind, recipient = "", parts = [], payments = [], reason = "" }) {
+export function prepareWorkflowReceipt({ id, kind, documentKind, recipient = "", parts = [], payments = [], reason = "" }) {
   try {
     requirePermission("RECEIPT_PRINT");
     const item = load(id);
     if (!Object.hasOwn(TYPES, kind)) throw new Error("Ungültige Quittungsart.");
+    checkInstitutionAction(item, kind, documentKind, payments, recipient, reason);
+    if (documentKind !== undefined && (kind !== "PAYMENT" || !["OWNER_HANDOVER", "FINDER_HANDOVER"].includes(documentKind))) {
+      throw new Error("Ungültiges Schreiben für eine Zahlung.");
+    }
     if (HANDOVERS.includes(kind)) requirePermission("ITEM_EDIT");
     if (payments.length) requirePermission("CASHBOOK_POST");
     const workflow = normalizeWorkflow(item);
@@ -148,16 +180,18 @@ export function prepareWorkflowReceipt({ id, kind, recipient = "", parts = [], p
     }
     if (kind === "PAYMENT" && !payments.length) throw new Error("Bitte mindestens eine Zahlung angeben.");
     if (kind === "FUND" && payments.length) throw new Error("Eine Fundannahmequittung enthält keine Zahlungsbuchung.");
-    if (kind === "OWNER_HANDOVER" && payments.some((payment) => payment.type === "OUT")) {
+    if ((kind === "OWNER_HANDOVER" || documentKind === "OWNER_HANDOVER") && payments.some((payment) => payment.type === "OUT")) {
       throw new Error("Finderlohn- und Auslagenauszahlungen an den Finder bitte über eine eigene Zahlungsquittung mit dem tatsächlichen Empfänger bestätigen.");
     }
     const receiptParts = selectedParts(workflow, parts, kind);
     const staged = stagePayments(workflow, payments);
     const receiptId = `Q-${new Date().getFullYear()}-${crypto.randomUUID()}`;
     const receipt = { id: receiptId, type: TYPES[kind], workflowKind: kind,
+      ...(documentKind ? { documentKind } : {}),
       recipient: String(recipient).trim(), printedAt: new Date().toISOString(), printedBy: getCurrentUserName(),
       parts: receiptParts, payments: staged.lines, chargeSnapshot: clone(workflow.payments),
       notes: String(reason).trim(), expensesRecipient: workflow.expensesRecipient,
+      ...(workflow.expensePayee ? { expensePayeeSnapshot: clone(workflow.expensePayee) } : {}),
       itemSnapshot: printSnapshot(item), workflowVersion: 1 };
     const job = { id: receiptId, kind, receipt, item: printSnapshot(item), sourceVersion: JSON.stringify(item) };
     // Ältere abgebrochene Aufträge nicht unbegrenzt im Speicher halten.
@@ -186,6 +220,7 @@ export function confirmWorkflowReceipt({ job, confirmed = false } = {}) {
       throw new Error("Der Vorgang wurde seit der Druckvorbereitung geändert. Bitte die Quittung neu vorbereiten und drucken.");
     }
     const { receipt, kind } = pending.job;
+    checkInstitutionAction(before, kind, receipt.documentKind, receipt.payments, receipt.recipient, receipt.notes);
     if (HANDOVERS.includes(kind)) requirePermission("ITEM_EDIT");
     if (receipt.payments.length) requirePermission("CASHBOOK_POST");
     const workflow = normalizeWorkflow(before);
@@ -261,14 +296,21 @@ export function reopenWorkflow({ id, reason }) {
   } catch (err) { return failure(err.message); }
 }
 
-export function recordDisposition({ id, parts, dispositionStatus, reason }) {
+export function recordDisposition({ id, parts, dispositionStatus, reason, proceedsCents }) {
   try {
     requirePermission("ITEM_EDIT");
     if (dispositionStatus !== "DISPOSED" || !String(reason || "").trim()) {
       throw new Error("Bitte die Maßnahme und ihre dokumentierte Entscheidungsgrundlage angeben.");
     }
     const before = load(id);
+    if (isReferralOnly(before)) throw new Error("Sonderfall: keine normale Verwertung. Zuständige Stelle und verbindlichen Ablauf klären.");
+    if (proceedsCents !== undefined && (!Number.isSafeInteger(proceedsCents) || proceedsCents < 0)) throw new Error("Ungültiger Verwertungserlös.");
     const workflow = normalizeWorkflow(before);
+    if (proceedsCents !== undefined) {
+      const totalProceeds = (workflow.disposalProceedsCents || 0) + proceedsCents;
+      if (!Number.isSafeInteger(totalProceeds)) throw new Error("Der gesamte Verwertungserlös ist zu gross.");
+      workflow.disposalProceedsCents = totalProceeds;
+    }
     if (workflow.blockedReason || workflow.decisionOpen) throw new Error("Bitte zuerst die Sperre oder offene Entscheidung klären.");
     const selected = selectedParts(workflow, parts, "TRANSFER");
     const now = new Date().toISOString();

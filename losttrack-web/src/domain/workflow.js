@@ -1,12 +1,17 @@
+import { isInstitutionFind, institutionRightsChecked, finderRewardExcluded, isReferralOnly } from "./captureContext.js";
+import { cashInContents } from "./foundValues.js";
 // Fachliche Nutzervorgabe für Horgen; keine unabhängige rechtliche Tarifprüfung.
 const FEE_CATALOG = "HORGEN_USER_2026_10_25";
 export const FEE_OPTIONS = [
   { code: "UNSET", label: "Gebühr noch nicht geprüft", cents: null },
   { code: "NONE", label: "Übrige Fundsache – gebührenfrei", cents: 0 },
-  { code: "KEY", label: "Einzelner Schlüssel – CHF 10.00", cents: 1000 },
-  { code: "KEY_BUNDLE", label: "Ganzer Schlüsselbund – CHF 10.00", cents: 1000 },
+  { code: "KEY", label: "Schlüssel – CHF 10.00", cents: 1000 },
+  // Nur zum Lesen bestehender Pläne und Quittungen, keine neue Auswahl.
+  { code: "KEY_BUNDLE", label: "Ganzer Schlüsselbund – CHF 10.00", cents: 1000, legacy: true },
   { code: "MOBILE_MEDIATION", label: "Mobiltelefon vermittelt – CHF 20.00", cents: 2000 },
 ];
+export const SELECTABLE_FEES = FEE_OPTIONS.filter((fee) => !fee.legacy);
+export function currentFeeCode(code) { return code === "KEY_BUNDLE" ? "KEY" : code; }
 const CATEGORIES = ["FEE", "REWARD", "EXPENSES"];
 const PHYSICAL_LABELS = {
   STORED: "Aufbewahrt", PARTIAL: "Teilweise herausgegeben / erledigt", RETURNED: "Vollständig herausgegeben",
@@ -64,7 +69,7 @@ export function normalizeWorkflow(item) {
     feeSnapshot: feeSnapshot(part.feeCode ?? "UNSET", part.feeSnapshot),
   }));
   const legacy = legacyReward(item);
-  const rewardWaived = item?.finder?.rewardChoice === "WAIVED";
+  const rewardWaived = !finderRewardExcluded(item) && item?.finder?.rewardChoice === "WAIVED";
   const payments = {};
   for (const category of CATEGORIES) {
     const row = stored.payments?.[category] || {};
@@ -77,6 +82,8 @@ export function normalizeWorkflow(item) {
   }
   payments.FEE.dueCents = feeTotal(parts);
   if (rewardWaived) payments.REWARD.dueCents = 0;
+  if (finderRewardExcluded(item) && !payments.REWARD.receivedCents && !payments.REWARD.paidCents &&
+    (payments.REWARD.dueCents === null || payments.REWARD.dueCents === 0)) payments.REWARD.dueCents = 0;
   return {
     ...clone(stored), version: 1, parts, payments,
     movements: Array.isArray(stored.movements) ? clone(stored.movements) : [],
@@ -103,6 +110,13 @@ function physicalStatus(item, workflow, remainingParts) {
 export function getWorkflowSummary(item) {
   const workflow = normalizeWorkflow(item);
   const blockers = [];
+  if (isReferralOnly(item)) blockers.push("Sonderfall: Zuständigkeit und verbindlichen Spezialablauf klären. Kein regulärer Gesamtabschluss.");
+  const mainReturned = workflow.movements.some((movement) => movement.kind === "OWNER_HANDOVER" && movement.parts?.some((part) => part.partId === "main")) &&
+    workflow.parts.find((part) => part.id === "main")?.handledQuantity === workflow.parts.find((part) => part.id === "main")?.quantity;
+  if (cashInContents(item) > 0 && !mainReturned) blockers.push("Verwahrtes Fundbargeld bleibt als Fundwert offen; keine automatische Auszahlung oder Vereinnahmung.");
+  if (workflow.disposalProceedsCents > 0) blockers.push("Verwertungserlös bleibt als gesonderter Fundwert offen; rechtliche und buchhalterische Abwicklung klären.");
+  if (item.regime && workflow.movements.some((movement) => movement.kind === "DISPOSITION")) blockers.push("Eine Verwertung beendet Finderrechte nicht automatisch. Verbleibender Fundwert und Rechtsabwicklung sind gesondert offen.");
+  if (item.expenseClaims?.some((claim) => claim.status === "REPORTED" || claim.status === "APPROVED" && !claim.settlementReceiptId)) blockers.push("Angemeldete Auslagen sind noch zu prüfen oder gesondert abzurechnen.");
   const partIds = new Set();
   const invalidParts = workflow.parts.some((part) => {
     const duplicate = partIds.has(part.id);
@@ -140,13 +154,18 @@ export function getWorkflowSummary(item) {
     if (!needsOutgoing && row.paidCents > 0) blockers.push(`${titles[category]}: Nicht vorgesehene Auszahlung muss geklärt werden.`);
     if (row.paidCents > row.receivedCents) blockers.push(`${titles[category]}: Auszahlung übersteigt die Einzahlung.`);
   }
-  if (!["WAIVED", "REQUESTED"].includes(item?.finder?.rewardChoice)) blockers.push("Die ausdrückliche Finderlohnwahl ist noch offen.");
+  if (isInstitutionFind(item)) {
+    if (!institutionRightsChecked(item)) blockers.push("Die rechtlich relevante Finderstelle des Haus-/Anstaltsfunds muss mit Prüfvermerk bestätigt werden.");
+    if (workflow.payments.REWARD.dueCents || workflow.payments.REWARD.receivedCents || workflow.payments.REWARD.paidCents) blockers.push("Historische Finderlohnbeträge beim Haus-/Anstaltsfund müssen geklärt werden; keine automatische Korrektur.");
+  } else if (!finderRewardExcluded(item) && !isReferralOnly(item) && !["WAIVED", "REQUESTED"].includes(item?.finder?.rewardChoice)) blockers.push("Die ausdrückliche Finderlohnwahl ist noch offen.");
   const state = physicalStatus(item, workflow, remainingParts);
   const canClose = blockers.length === 0;
   const overallStatus = canClose ? (workflow.closedAt ? "CLOSED" : "READY_TO_CLOSE")
     : state === "STORED" || state === "PARTIAL" ? "IN_PROGRESS" : "SETTLEMENT_OPEN";
   return { workflow, physicalStatus: state, physicalLabel: PHYSICAL_LABELS[state], overallStatus,
-    overallLabel: OVERALL_LABELS[overallStatus], blockers, canClose, remainingParts, payments: workflow.payments };
+    overallLabel: item?.origin?.type === "PUBLIC_TRANSPORT" && remainingParts.length
+      ? "Weiterleitung an zuständiges Verkehrsunternehmen vorbereiten" : OVERALL_LABELS[overallStatus],
+    blockers, canClose, remainingParts, payments: workflow.payments };
 }
 
 export function validateWorkflowPlan(item, plan = {}) {
@@ -174,6 +193,7 @@ export function validateWorkflowPlan(item, plan = {}) {
   const reward = plan.rewardCents === undefined ? current.payments.REWARD.dueCents : plan.rewardCents;
   const expenses = plan.expensesCents === undefined ? current.payments.EXPENSES.dueCents : plan.expensesCents;
   if ((reward !== null && !isMoney(reward)) || (expenses !== null && !isMoney(expenses))) return fail("Beträge müssen in ganzen Rappen angegeben werden oder noch ungeklärt bleiben.");
+  if (finderRewardExcluded(item) && reward !== 0 && reward !== null) return fail("Finderlohn ist bei Haus-/Anstalts- und ÖV-Funden gesperrt. Dies ist kein persönlicher Verzicht.");
   if (item?.finder?.rewardChoice === "WAIVED" && reward !== 0 && reward !== null) return fail("Bei ausdrücklich erklärtem Verzicht darf kein Finderlohn angesetzt werden.");
   const recipient = plan.expensesRecipient === undefined ? current.expensesRecipient : plan.expensesRecipient;
   if (!["UNSET", "FINDER", "OFFICE"].includes(recipient)) return fail("Bitte einen gültigen Empfänger des Auslagenersatzes auswählen.");
@@ -184,7 +204,7 @@ export function validateWorkflowPlan(item, plan = {}) {
     payments: clone(current.payments) };
   if (typeof next.decisionOpen !== "boolean") return fail("Die offene Entscheidung muss ausdrücklich mit Ja oder Nein angegeben werden.");
   next.payments.FEE.dueCents = feeTotal(nextParts);
-  next.payments.REWARD.dueCents = item?.finder?.rewardChoice === "WAIVED" ? 0 : reward;
+  next.payments.REWARD.dueCents = finderRewardExcluded(item) || item?.finder?.rewardChoice === "WAIVED" ? 0 : reward;
   next.payments.EXPENSES.dueCents = expenses;
   for (const category of CATEGORIES) {
     const row = next.payments[category];
@@ -192,6 +212,21 @@ export function validateWorkflowPlan(item, plan = {}) {
     if (row.dueCents === null && (row.receivedCents > 0 || row.paidCents > 0)) return fail("Ein bereits bebuchter Betrag darf nicht wieder als ungeklärt markiert werden.");
   }
   if (recipient !== "FINDER" && next.payments.EXPENSES.paidCents > 0) return fail("Der Kostenträger kann nach einer Auslagenauszahlung nicht so geändert werden.");
+  const payee = plan.expensePayee === undefined ? current.expensePayee : plan.expensePayee;
+  if (payee !== undefined) {
+    if (!payee || typeof payee !== "object" || !["LEGAL_FINDER", "DISCOVERER", "OFFICE", "OTHER"].includes(payee.role) ||
+      !["FINDER_LAW", "OTHER_BASIS"].includes(payee.basis) || typeof payee.name !== "string" || typeof payee.note !== "string" || typeof payee.confirmed !== "boolean") return fail("Ungültige Zuordnung des Auslagenempfängers.");
+    next.expensePayee = clone(payee);
+  }
+  if (item.regime && expenses > 0 && recipient === "FINDER") {
+    if (!payee?.confirmed || !payee.name.trim() || !payee.note.trim()) return fail("Auslagen: tatsächlichen Anspruchsteller, Grundlage und dokumentierte Freigabe erfassen.");
+    if (finderRewardExcluded(item) && payee.role !== "LEGAL_FINDER" && payee.basis === "FINDER_LAW") return fail("Private Auslagen der Fundperson sind hier kein automatischer Anspruch aus Finderrecht.");
+  }
+  if (plan.finderRightsReview !== undefined) {
+    const review = plan.finderRightsReview;
+    if (!review || typeof review.confirmed !== "boolean" || typeof review.note !== "string" || review.confirmed && !review.note.trim()) return fail("Finder-/Eigentumsanspruch nur mit dokumentierter Entscheidung bestätigen.");
+    next.finderRightsReview = clone(review);
+  }
   return { ok: true, workflow: next };
 }
 
@@ -204,6 +239,14 @@ export function validateStoredWorkflow(item) {
   const fail = (message) => ({ ok: false, error: `Ungültige Workflow-Daten: ${message}` });
   const date = (value) => typeof value === "string" && Number.isFinite(Date.parse(value));
   if (!object(stored) || stored.version !== 1) return fail("Nicht unterstützte Workflow-Version.");
+  if (stored.disposalProceedsCents !== undefined && !isMoney(stored.disposalProceedsCents)) return fail("Ungültiger Verwertungserlös.");
+  if (stored.expensePayee !== undefined) {
+    const payee = stored.expensePayee;
+    if (!object(payee) || !["LEGAL_FINDER", "DISCOVERER", "OFFICE", "OTHER"].includes(payee.role) ||
+      !["FINDER_LAW", "OTHER_BASIS"].includes(payee.basis) || typeof payee.confirmed !== "boolean" ||
+      typeof payee.name !== "string" || typeof payee.note !== "string") return fail("Ungültiger Auslagenempfänger.");
+  }
+  if (stored.finderRightsReview !== undefined && (!object(stored.finderRightsReview) || typeof stored.finderRightsReview.confirmed !== "boolean" || typeof stored.finderRightsReview.note !== "string")) return fail("Ungültige Finderrechtsprüfung.");
   if (!Array.isArray(stored.parts) || !stored.parts.length || stored.parts.length > 100) return fail("Die Gegenstandsliste ist ungültig.");
   const ids = new Set();
   for (const part of stored.parts) {

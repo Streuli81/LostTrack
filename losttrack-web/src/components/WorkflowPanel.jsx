@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { isInstitutionFind, fundReceiptRecipient, finderRecipient, finderRewardExcluded, isReferralOnly } from "../domain/captureContext.js";
+import { defaultExpensePayee } from "../domain/expenseClaims.js";
+import ExpenseClaims from "./ExpenseClaims.jsx";
 import { hasPermission } from "../core/auth/auth.js";
-import { FEE_OPTIONS, getWorkflowSummary } from "../domain/workflow.js";
+import { FEE_OPTIONS, SELECTABLE_FEES, currentFeeCode, getWorkflowSummary } from "../domain/workflow.js";
 import { saveWorkflowPlan, prepareWorkflowReceipt, confirmWorkflowReceipt, reprintWorkflowReceipt,
   closeWorkflow, reopenWorkflow, recordDisposition } from "../core/storage/workflowRepo.js";
 import WorkflowReceiptPrint from "../print/WorkflowReceiptPrint.jsx";
 
 const names = { FEE: "Gebühren", REWARD: "Finderlohn", EXPENSES: "Auslagenersatz" };
 const kinds = [
-  ["OWNER_HANDOVER", "Persönliche Herausgabe an Eigentümer / Abholer"],
-  ["FINDER_HANDOVER", "Persönliche Herausgabe an Finder / Abholer"],
-  ["TRANSFER", "Persönliche Übergabe an zuständige Stelle"],
-  ["PAYMENT", "Nur Ein- / Auszahlung, keine Gegenstandsübergabe"],
-  ["FUND", "Fundquittung / Annahmebestätigung"],
-  ["DISPOSITION", "Dokumentierte Verwertung"],
+  ["FUND", "Fundquittung"],
+  ["OWNER_HANDOVER", "Herausgabe an Eigentümer"],
+  ["FINDER_HANDOVER", "Herausgabe an Finder"],
 ];
 
 function money(cents) {
@@ -50,13 +51,16 @@ function MoneyTable({ payments, expensesRecipient }) {
 
 function PlanEditor({ item, summary, onSaved, onError, onDirty }) {
   const workflow = summary.workflow;
-  const [parts, setParts] = useState(() => workflow.parts.map((part) => ({ ...part })));
+  const [parts, setParts] = useState(() => workflow.parts.map((part) => ({ ...part, feeCode: currentFeeCode(part.feeCode) })));
   const [reward, setReward] = useState(inputAmount(workflow.payments.REWARD.dueCents));
   const [expenses, setExpenses] = useState(inputAmount(workflow.payments.EXPENSES.dueCents));
   const [expensesRecipient, setExpensesRecipient] = useState(workflow.expensesRecipient || "UNSET");
+  const [expensePayee, setExpensePayee] = useState(() => workflow.expensePayee || defaultExpensePayee(item));
+  const [finderRightsReview, setFinderRightsReview] = useState(() => workflow.finderRightsReview || { confirmed: false, note: "" });
   const [blockedReason, setBlockedReason] = useState(workflow.blockedReason || "");
   const [decisionOpen, setDecisionOpen] = useState(!!workflow.decisionOpen);
-  const waived = item.finder?.rewardChoice === "WAIVED";
+  const institution = finderRewardExcluded(item);
+  const waived = !institution && item.finder?.rewardChoice === "WAIVED";
 
   function updatePart(index, patch) {
     onDirty();
@@ -65,8 +69,8 @@ function PlanEditor({ item, summary, onSaved, onError, onDirty }) {
   function onSubmit(event) {
     event.preventDefault();
     try {
-      const result = saveWorkflowPlan({ id: item.id, parts, rewardCents: waived ? 0 : cents(reward),
-        expensesCents: cents(expenses), expensesRecipient, blockedReason, decisionOpen });
+      const result = saveWorkflowPlan({ id: item.id, parts, rewardCents: institution || waived ? 0 : cents(reward),
+        expensesCents: cents(expenses), expensesRecipient, ...(item.regime ? { expensePayee, finderRightsReview } : {}), blockedReason, decisionOpen });
       if (!result.ok) throw new Error(result.error || "Der Ablaufplan konnte nicht gespeichert werden.");
       onSaved("Gegenstände und Zahlungspositionen wurden gespeichert.");
     } catch (error) { onError(error.message); }
@@ -76,16 +80,14 @@ function PlanEditor({ item, summary, onSaved, onError, onDirty }) {
     <form onSubmit={onSubmit} style={stack}>
       <p>Ein Schlüssel oder ganzer Schlüsselbund kostet CHF 10.00. Die tatsächliche Vermittlung eines Mobiltelefons kostet CHF 20.00 pro Telefon. Andere Fundsachen sind gebührenfrei. Bitte den passenden Fall bewusst auswählen.</p>
       <div style={{ overflowX: "auto" }}><table style={{ width: "100%" }}>
-        <thead><tr><th style={cell}>Gegenstand</th><th style={cell}>Anzahl</th><th style={cell}>Bereits abgegeben</th><th style={cell}>Gebühr pro Stück / Bund</th><th style={cell}>Aktion</th></tr></thead>
+        <thead><tr><th style={cell}>Gegenstand</th><th style={cell}>Gebührenauswahl</th><th style={cell}>Aktion</th></tr></thead>
         <tbody>{parts.map((part, index) => <tr key={part.id}>
           <td style={cell}><input aria-label={`Gegenstand ${index + 1}`} value={part.label}
-            onChange={(event) => updatePart(index, { label: event.target.value })} required style={input} /></td>
-          <td style={cell}><input aria-label={`Anzahl ${index + 1}`} type="number" min={Math.max(1, part.handledQuantity || 0)} step="1"
-            value={part.quantity} onChange={(event) => updatePart(index, { quantity: Number(event.target.value) })} required style={{ ...input, width: 80 }} /></td>
-          <td style={cell}>{part.handledQuantity || 0}</td>
+            onChange={(event) => updatePart(index, { label: event.target.value })} required style={input} />
+            {part.quantity > 1 && <small>Bisher gespeicherter Bestand: {part.quantity}; bereits abgegeben: {part.handledQuantity || 0}. Diese Mengen bleiben erhalten.</small>}</td>
           <td style={cell}><select aria-label={`Gebühr für Gegenstand ${index + 1}`} value={part.feeCode}
             onChange={(event) => updatePart(index, { feeCode: event.target.value })} style={input}>
-            {FEE_OPTIONS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+            {SELECTABLE_FEES.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
           </select></td>
           <td style={cell}><button type="button" disabled={!!part.handledQuantity || parts.length === 1}
             onClick={() => { onDirty(); setParts((current) => current.filter((entry) => entry.id !== part.id)); }}>Entfernen</button></td>
@@ -95,7 +97,8 @@ function PlanEditor({ item, summary, onSaved, onError, onDirty }) {
         { id: crypto.randomUUID(), label: "", quantity: 1, handledQuantity: 0, feeCode: "UNSET" }]); }}>Weiteren Gegenstand hinzufügen</button></div>
       <div style={columns}>
         <label style={field}>Finderlohn gesamt (CHF)
-          <input value={waived ? "0.00" : reward} disabled={waived} onChange={(event) => { onDirty(); setReward(event.target.value); }} inputMode="decimal" placeholder="Leer = noch ungeklärt" style={input} />
+          <input value={institution || waived ? "0.00" : reward} disabled={institution || waived} onChange={(event) => { onDirty(); setReward(event.target.value); }} inputMode="decimal" placeholder="Leer = noch ungeklärt" style={input} />
+          {institution && <span>Finderlohn bei Haus-/Anstaltsfund gesperrt; kein persönlicher Verzicht. Historische Buchungen bleiben unverändert und müssen bei Abweichungen geklärt werden.</span>}
           {waived && <span>Ausdrücklicher Finderlohnverzicht liegt vor.</span>}
         </label>
         <label style={field}>Auslagenersatz gesamt (CHF)
@@ -104,80 +107,91 @@ function PlanEditor({ item, summary, onSaved, onError, onDirty }) {
         <label style={field}>An wen geht der Auslagenersatz?
           <select value={expensesRecipient} onChange={(event) => { onDirty(); setExpensesRecipient(event.target.value); }} style={input}>
             <option value="UNSET">Noch ungeklärt / bei CHF 0 nicht erforderlich</option>
-            <option value="FINDER">Finder / andere berechtigte Person</option>
+            <option value="FINDER">{institution ? "Geprüfte Finderstelle / andere berechtigte Person" : "Finder / andere berechtigte Person"}</option>
             <option value="OFFICE">Fundbüro – Kosten bereits ausgelegt</option>
           </select>
         </label>
       </div>
+      {item.regime && <fieldset style={card}><legend>Auslagen: tatsächlicher Anspruchsteller und Freigabe</legend>
+        <label style={field}>Person / Stelle<input name="expense_payee_name" value={expensePayee.name} onChange={(e) => { onDirty(); setExpensePayee({ ...expensePayee, name: e.target.value, confirmed: false }); }} /></label>
+        <label style={field}>Anspruchsteller-Rolle<select value={expensePayee.role} onChange={(e) => { onDirty(); setExpensePayee({ ...expensePayee, role: e.target.value, confirmed: false }); }}>
+          <option value="LEGAL_FINDER">Rechtlicher Finder / Finderstelle</option><option value="DISCOVERER">Ursprüngliche Fundperson</option><option value="OFFICE">Fundbüro</option><option value="OTHER">Andere berechtigte Person / Stelle</option>
+        </select></label>
+        <label style={field}>Grundlage<select value={expensePayee.basis} onChange={(e) => { onDirty(); setExpensePayee({ ...expensePayee, basis: e.target.value, confirmed: false }); }}><option value="FINDER_LAW">Finderrecht – Rückgabe an Eigentümer erforderlich</option><option value="OTHER_BASIS">Andere Grundlage – gesonderte dokumentierte Entscheidung</option></select></label>
+        <label style={field}>Begründete Freigabe<input name="expense_payee_note" value={expensePayee.note} onChange={(e) => { onDirty(); setExpensePayee({ ...expensePayee, note: e.target.value }); }} /></label>
+        <label><input type="checkbox" checked={expensePayee.confirmed} onChange={(e) => { onDirty(); setExpensePayee({ ...expensePayee, confirmed: e.target.checked }); }} /> Anspruchsteller und anerkannte Auslagen fachlich geprüft</label>
+        <p>Bei positiven Auslagen mit Auszahlung sind Person, Grundlage und Freigabe erforderlich. Eine Anmeldung oder ein Fristablauf löst keine Zahlung aus. Private Kosten eines Entdeckers bei Haus-/Anstalts- oder ÖV-Funden sind kein automatischer Anspruch aus Finderrecht.</p>
+      </fieldset>}
       <p>Wenn keine Auslagen anfallen, ausdrücklich 0.00 eintragen. Leer bedeutet „noch ungeklärt“ und verhindert den Gesamtabschluss. Ein Finderlohnverzicht ist kein Verzicht auf Auslagenersatz.</p>
       <label style={field}>Herausgabesperre – Begründung (leer = keine Sperre)
         <input value={blockedReason} onChange={(event) => { onDirty(); setBlockedReason(event.target.value); }} style={input} />
       </label>
+      {item.regime && <fieldset style={card}><legend>Gesonderte Finder-/Eigentumsanspruchsprüfung</legend>
+        <p>Nur für eine tatsächliche Herausgabe an den rechtlichen Finder. Dies ist keine Finderlohnzahlung und keine automatische Freigabe nach einem oder fünf Jahren. Voraussetzungen und allfällige frühere Verwertung gesondert prüfen.</p>
+        <label style={field}>Dokumentierte Entscheidung<input value={finderRightsReview.note} onChange={(e) => { onDirty(); setFinderRightsReview({ confirmed: false, note: e.target.value }); }} /></label>
+        <label><input type="checkbox" checked={finderRightsReview.confirmed} onChange={(e) => { onDirty(); setFinderRightsReview({ ...finderRightsReview, confirmed: e.target.checked }); }} /> Zuständige Stelle hat den konkreten Anspruch / die Herausgabe geprüft und freigegeben</label>
+      </fieldset>}
       <label><input type="checkbox" checked={decisionOpen} onChange={(event) => { onDirty(); setDecisionOpen(event.target.checked); }} /> Eine fachliche Entscheidung ist noch offen</label>
       <div><button type="submit">Plan speichern</button></div>
     </form>
   </details>;
 }
 
-function ReceiptComposer({ item, summary, onPrepare, onSaved, onError }) {
-  const [kind, setKind] = useState("OWNER_HANDOVER");
-  const [recipient, setRecipient] = useState(personName(item.owner) || personName(item.collector));
-  const [quantities, setQuantities] = useState({});
+function ReceiptComposer({ item, summary, onPrepare, onError }) {
+  const [kind, setKind] = useState("FUND");
+  const [recipient, setRecipient] = useState(fundReceiptRecipient(item));
+  const [selected, setSelected] = useState(() => Object.fromEntries(summary.remainingParts.map((part) => [part.id, true])));
+  const [paymentOnly, setPaymentOnly] = useState(false);
   const [amounts, setAmounts] = useState({});
   const [reason, setReason] = useState("");
-  const handling = ["OWNER_HANDOVER", "FINDER_HANDOVER", "TRANSFER", "DISPOSITION"].includes(kind);
+  const handling = kind !== "FUND" && !paymentOnly;
   const paymentInputs = [
     ["FEE", "IN", "Gebühren – Einnahme heute"],
     ["REWARD", "IN", "Finderlohn – Einzahlung heute"], ["REWARD", "OUT", "Finderlohn – Auszahlung heute"],
     ["EXPENSES", "IN", "Auslagenersatz – Einnahme heute"], ["EXPENSES", "OUT", "Auslagenersatz – Auszahlung heute"],
-  ].filter(([, type]) => kind !== "OWNER_HANDOVER" || type !== "OUT");
+  ].filter(([category, type]) => (!finderRewardExcluded(item) || category !== "REWARD") && (kind !== "OWNER_HANDOVER" || type !== "OUT"));
 
   function changeKind(value) {
     setKind(value);
+    setPaymentOnly(false);
     setAmounts({});
-    setRecipient(value === "FUND" || value === "FINDER_HANDOVER"
-      ? personName(item.collector) || personName(item.finder)
+    setRecipient(value === "FUND" ? fundReceiptRecipient(item) : value === "FINDER_HANDOVER"
+      ? finderRecipient(item)
       : personName(item.owner) || personName(item.collector));
   }
   function onSubmit(event) {
     event.preventDefault();
     try {
-      const parts = handling ? summary.remainingParts.filter((part) => Number(quantities[part.id]) > 0)
-        .map((part) => ({ partId: part.id, quantity: Number(quantities[part.id]) })) : [];
-      if (kind === "DISPOSITION") {
-        if (!reason.trim()) throw new Error("Bitte die Freigabe und den Grund der Verwertung dokumentieren.");
-        const result = recordDisposition({ id: item.id, parts, dispositionStatus: "DISPOSED", reason });
-        if (!result.ok) throw new Error(result.error || "Die Verwertung konnte nicht gespeichert werden.");
-        onSaved("Die dokumentierte Verwertung wurde gespeichert. Offene Zahlungen bleiben weiterhin sichtbar.");
-        return;
-      }
+      const parts = handling ? summary.remainingParts.filter((part) => selected[part.id])
+        .map((part) => ({ partId: part.id, quantity: part.remainingQuantity })) : [];
       const payments = kind === "FUND" ? [] : paymentInputs.map(([category, type]) => ({
         category, type, amountCents: cents(amounts[`${category}:${type}`] || "", false),
       })).filter((payment) => payment.amountCents > 0);
-      onPrepare({ id: item.id, kind, recipient, parts, payments, reason });
+      onPrepare({ id: item.id, kind: paymentOnly ? "PAYMENT" : kind,
+        ...(paymentOnly ? { documentKind: kind } : {}), recipient, parts, payments, reason });
     } catch (error) { onError(error.message); }
   }
 
   return <section style={card}>
-    <h4 style={{ marginTop: 0 }}>Persönliche Übergabe oder Zahlung vorbereiten</h4>
+    <h4 style={{ marginTop: 0 }}>Schreiben vorbereiten und drucken</h4>
     <p>Die folgenden Aktionen verwenden den gespeicherten Plan. Vor dem Druck werden noch keine Gegenstände als übergeben markiert und keine Zahlungen gebucht.</p>
     <form onSubmit={onSubmit} style={stack}>
-      <label style={field}>Vorgang<select value={kind} onChange={(event) => changeKind(event.target.value)} style={input}>
+      <label style={field}>Schreiben<select value={kind} onChange={(event) => changeKind(event.target.value)} style={input}>
         {kinds.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select></label>
-      {kind !== "DISPOSITION" && <label style={field}>Empfänger / zahlende oder empfangende Person
+      {isInstitutionFind(item) && kind === "FINDER_HANDOVER" && <p>Bei diesem Haus-/Anstaltsfund ist die fachlich geprüfte Finderstelle gemeint. Die ursprüngliche Fundperson ist nicht automatisch Empfängerin. Eine Vertretungsberechtigung muss fachlich geprüft sein.</p>}
+      {kind !== "FUND" && <label><input type="checkbox" checked={paymentOnly} onChange={(event) => setPaymentOnly(event.target.checked)} /> Nur Zahlung zu diesem Schreiben, keine weitere Gegenstandsübergabe</label>}
+      <label style={field}>Empfänger / zahlende oder empfangende Person
         <input value={recipient} onChange={(event) => setRecipient(event.target.value)} required style={input} />
-      </label>}
+      </label>
       {handling && <fieldset style={card}><legend>Welche Gegenstände werden jetzt abgegeben?</legend>
         {summary.remainingParts.length ? summary.remainingParts.map((part) => <label key={part.id} style={{ ...field, marginBottom: 10 }}>
           {part.label} – noch vorhanden: {part.remainingQuantity}
-          <input type="number" min="0" max={part.remainingQuantity} step="1" value={quantities[part.id] || ""}
-            onChange={(event) => setQuantities((current) => ({ ...current, [part.id]: event.target.value }))}
-            placeholder="0 = bleibt beim Fundbüro" style={{ ...input, maxWidth: 220 }} />
+          <input type="checkbox" checked={!!selected[part.id]}
+            onChange={(event) => setSelected((current) => ({ ...current, [part.id]: event.target.checked }))} /> Diesen Gegenstand übergeben
         </label>) : <p>Es sind keine Gegenstände mehr beim Fundbüro vorhanden.</p>}
       </fieldset>}
-      {kind === "DISPOSITION" ? <p>Nur eine bereits fachlich freigegebene Verwertung dokumentieren. Fristablauf ist keine automatische Freigabe. Die Dokumentation ersetzt keine Prüfung der rechtlichen Voraussetzungen.</p>
-        : kind !== "FUND" && <fieldset style={card}><legend>Tatsächlich in diesem Vorgang zu bestätigende Zahlungen</legend>
+      {kind !== "FUND" && <fieldset style={card}><legend>Tatsächlich in diesem Vorgang zu bestätigende Zahlungen</legend>
           <div style={columns}>{paymentInputs.map(([category, type, label]) => <label key={`${category}:${type}`} style={field}>{label} (CHF)
             <input value={amounts[`${category}:${type}`] || ""} inputMode="decimal" placeholder="Leer = keine Buchung"
               disabled={category === "EXPENSES" && type === "OUT" && summary.workflow.expensesRecipient === "OFFICE"}
@@ -185,12 +199,40 @@ function ReceiptComposer({ item, summary, onPrepare, onSaved, onError }) {
           </label>)}</div>
           <p>Teilzahlungen sind möglich. Gebühr, Finderlohn und Auslagenersatz bleiben getrennt. Die Zahlungen auf dieser Quittung betreffen die oben genannte Person; für verschiedene Personen getrennte Quittungen erstellen. Bei einer reinen Zahlung findet keine Gegenstandsübergabe statt.</p>
         </fieldset>}
-      <label style={field}>{kind === "DISPOSITION" ? "Dokumentierte Freigabe und Grund" : "Bemerkung / Grund"}
-        <textarea value={reason} onChange={(event) => setReason(event.target.value)} required={kind === "DISPOSITION"} style={input} />
+      <label style={field}>Bemerkung / Grund
+        <textarea value={reason} onChange={(event) => setReason(event.target.value)} style={input} />
       </label>
-      <div><button type="submit">{kind === "DISPOSITION" ? "Freigegebene Verwertung dokumentieren" : "Quittung vorbereiten und drucken"}</button></div>
+      <div><button type="submit">Quittung vorbereiten und drucken</button></div>
     </form>
   </section>;
+}
+
+function DispositionEditor({ item, summary, onSaved, onError }) {
+  const [selected, setSelected] = useState({});
+  const [reason, setReason] = useState("");
+  const [proceeds, setProceeds] = useState("");
+  function submit(event) {
+    event.preventDefault();
+    const parts = summary.remainingParts.filter((part) => selected[part.id])
+      .map((part) => ({ partId: part.id, quantity: part.remainingQuantity }));
+    let proceedsCents;
+    try { proceedsCents = cents(proceeds); } catch (error) { return onError(error.message); }
+    const result = recordDisposition({ id: item.id, parts, dispositionStatus: "DISPOSED", reason,
+      ...(proceedsCents !== null ? { proceedsCents } : {}) });
+    if (!result.ok) return onError(result.error || "Die Verwertung konnte nicht gespeichert werden.");
+    onSaved("Die dokumentierte Verwertung wurde gespeichert. Offene Zahlungen bleiben sichtbar.");
+  }
+  return <details style={card}><summary>Verwertung dokumentieren (kein Schreiben)</summary>
+    <p>Nur eine bereits fachlich freigegebene Verwertung dokumentieren. Ein Fristablauf ist keine automatische Freigabe.</p>
+    <form onSubmit={submit} style={stack}>
+      {summary.remainingParts.map((part) => <label key={part.id}><input type="checkbox" checked={!!selected[part.id]}
+        onChange={(event) => setSelected({ ...selected, [part.id]: event.target.checked })} /> {part.label}</label>)}
+      <label style={field}>Dokumentierte Freigabe und Grund<textarea required value={reason} onChange={(event) => setReason(event.target.value)} style={input} /></label>
+      <label style={field}>Tatsächlicher Verwertungserlös (CHF, falls vorhanden)<input value={proceeds} onChange={(e) => setProceeds(e.target.value)} inputMode="decimal" /></label>
+      <p>Ein Erlös wird als gesonderter Fundwert dokumentiert. Keine automatische Gebühreneinnahme, Auszahlung oder Beendigung von Finderrechten.</p>
+      <button type="submit">Freigegebene Verwertung dokumentieren</button>
+    </form>
+  </details>;
 }
 
 export default function WorkflowPanel({ item, onChanged }) {
@@ -294,6 +336,8 @@ export default function WorkflowPanel({ item, onChanged }) {
       </table></div>
       <h4>Gebühren, Finderlohn und Auslagenersatz</h4>
       <MoneyTable payments={summary.payments} expensesRecipient={summary.workflow.expensesRecipient} />
+      {summary.workflow.disposalProceedsCents > 0 && <p><strong>Gesonderter Verwertungserlös: {money(summary.workflow.disposalProceedsCents)}</strong><br />
+        Als Fundwert dokumentiert, nicht automatisch als Gebühreneinnahme gebucht oder an Finder ausgezahlt. Die weitere Abwicklung ist offen.</p>}
       {!!summary.blockers.length && <div><h4>Noch zu erledigen</h4><ul>{summary.blockers.map((reason, index) => <li key={`${index}:${reason}`}>{reason}</li>)}</ul></div>}
       {!summary.blockers.length && !closed && <p>Alle Voraussetzungen sind erfüllt. Der Vorgang kann abgeschlossen werden.</p>}
       {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}
@@ -307,7 +351,9 @@ export default function WorkflowPanel({ item, onChanged }) {
     {canEdit && !closed && !job && <PlanEditor key={`plan:${formKey}:${planReset}`} item={item} summary={summary} onSaved={saved} onError={failed} onDirty={() => setPlanDirty(true)} />}
     {planDirty && <p role="status">Der Plan enthält ungespeicherte Änderungen. Bitte vor einer Quittung speichern.
       {" "}<button type="button" onClick={() => { setPlanDirty(false); setPlanReset((value) => value + 1); }}>Planänderungen verwerfen</button></p>}
-    {canEdit && canPrint && !closed && !job && !planDirty && <ReceiptComposer key={`receipt:${formKey}`} item={item} summary={summary} onPrepare={prepare} onSaved={saved} onError={failed} />}
+    {canEdit && canPrint && !closed && !job && !planDirty && <ReceiptComposer key={`receipt:${formKey}`} item={item} summary={summary} onPrepare={prepare} onError={failed} />}
+    <ExpenseClaims key={`claims:${formKey}`} item={item} canEdit={canEdit && !closed && !job && !planDirty && !isReferralOnly(item)} onChanged={onChanged} />
+    {canEdit && !isReferralOnly(item) && !closed && !job && !planDirty && summary.remainingParts.length > 0 && <DispositionEditor key={`disposition:${formKey}`} item={item} summary={summary} onSaved={saved} onError={failed} />}
     <details style={card}><summary style={{ cursor: "pointer", fontWeight: 700 }}>Bestätigte Übergaben und Verwertungen ({summary.workflow.movements.length})</summary>
       {summary.workflow.movements.length ? <ul>{summary.workflow.movements.map((movement) => <li key={movement.id} style={{ margin: "10px 0" }}>
         {kinds.find(([value]) => value === movement.kind)?.[1] || (movement.kind === "DISPOSITION" ? "Dokumentierte Verwertung" : "Dokumentierter Verbleib")}
@@ -347,7 +393,7 @@ export default function WorkflowPanel({ item, onChanged }) {
         </div>
       </div>
     </div>}
-    {job && <div id="workflow-receipt-print"><WorkflowReceiptPrint job={job} /></div>}
+    {job && createPortal(<div id="workflow-receipt-print"><WorkflowReceiptPrint job={job} /></div>, document.body)}
   </section>;
 }
 
@@ -361,12 +407,13 @@ const overlay = { position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", di
 const printStyles = `
 #workflow-receipt-print { display: none; }
 @media print {
-  body[data-losttrack-print="workflow"] * { visibility: hidden !important; }
-  body[data-losttrack-print="workflow"] #workflow-receipt-print,
-  body[data-losttrack-print="workflow"] #workflow-receipt-print * { visibility: visible !important; }
-  body[data-losttrack-print="workflow"] #workflow-receipt-print { display: block; position: absolute; top: 0; left: 0; width: 100%; background: white; color: black; }
-  .workflow-receipt-sheet { color: black; background: white; padding: 12mm; font-family: system-ui, sans-serif; font-size: 11pt; }
-  .workflow-receipt-sheet h3 { margin-top: 18px; }
+  @page { size: A4; margin: 12mm; }
+  html, body[data-losttrack-print="workflow"] { height: auto !important; min-height: 0 !important; }
+  body[data-losttrack-print="workflow"] > * { display: none !important; }
+  body[data-losttrack-print="workflow"] > #workflow-receipt-print { display: block !important; position: static; width: auto; margin: 0; padding: 0; background: white; color: black; }
+  .workflow-receipt-sheet { color: black; background: white; padding: 0; font-family: system-ui, sans-serif; font-size: 10pt; overflow-wrap: anywhere; }
+  .workflow-receipt-sheet p { margin: 8px 0; }
+  .workflow-receipt-sheet h3 { margin: 12px 0 6px; }
   .workflow-receipt-sheet tr { break-inside: avoid; }
 }
 `;

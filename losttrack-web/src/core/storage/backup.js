@@ -2,6 +2,8 @@ import { hasPermission } from "../auth/auth.js";
 import { verifyCashbookChain } from "./lostItemRepo.js";
 import { validateStoredWorkflow } from "../../domain/workflow.js";
 import { CATALOG_KEY, validateCatalog } from "../../domain/catalogModel.js";
+import { validateExpenseClaims } from "../../domain/expenseClaims.js";
+import { validateFoundValues } from "../../domain/foundValues.js";
 
 const PREFIX = "losttrack:lostItems.";
 const RECORDS = `${PREFIX}records.v1`;
@@ -77,6 +79,9 @@ function validate(backup) {
       assert(!item.id || !ids.has(item.id), "Fundsachen oder Entwürfe enthalten doppelte IDs.");
       ids.add(item.id);
       const workflowCheck = validateStoredWorkflow(item);
+      const claimsCheck = validateExpenseClaims(item), contentsCheck = validateFoundValues(item);
+      assert(claimsCheck.ok, claimsCheck.error);
+      assert(contentsCheck.ok, contentsCheck.error);
       assert(workflowCheck.ok, workflowCheck.error || "Ungültige Workflow-Daten.");
     }
   }

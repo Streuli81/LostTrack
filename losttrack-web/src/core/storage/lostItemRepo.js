@@ -2,7 +2,9 @@
 
 import { storage } from "./storage.js";
 import { validateLostItem, VALIDATION_MODE } from "../../domain/lostItem.validators.js";
-import { getCurrentUserName, hasPermission } from "../auth/auth.js";
+import { getCurrentUserName, getCurrentUser, hasPermission } from "../auth/auth.js";
+import { prepareCapture, isInstitutionFind, finderRewardExcluded, isReferralOnly } from "../../domain/captureContext.js";
+import { validateExpenseClaims } from "../../domain/expenseClaims.js";
 import { FEE_OPTIONS, normalizeWorkflow, validateWorkflowPlan, validateStoredWorkflow } from "../../domain/workflow.js";
 
 function permissionDenied(action) {
@@ -18,7 +20,7 @@ function closedWorkflowDenied(item) {
 }
 
 function legacyWorkflowDenied(item) {
-  if (!item?.workflow) return null;
+  if (!item?.workflow && !isInstitutionFind(item) && !isReferralOnly(item)) return null;
   const error = "Bitte den bestätigten Herausgabe- und Zahlungsablauf verwenden.";
   return { ok: false, error, errors: { workflow: error } };
 }
@@ -247,6 +249,7 @@ export function payFinderReward({
 
   const item = getLostItemById(id);
   if (!item) return { ok: false, error: "Not found" };
+  if (finderRewardExcluded(item) || isReferralOnly(item)) return { ok: false, error: "Finderlohn ist in diesem Fundregime gesperrt." };
 
   return postCashbookEntry({
     type: "OUT",
@@ -276,6 +279,7 @@ export function receiveOwnerReward({
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  if (finderRewardExcluded(current) || isReferralOnly(current)) return { ok: false, error: "Finderlohn ist in diesem Fundregime gesperrt." };
   const workflowDenied = legacyWorkflowDenied(current);
   if (workflowDenied) return workflowDenied;
 
@@ -416,7 +420,9 @@ export function searchLostItems(q = {}) {
         const fn = norm(partyFullName(r?.finder));
         const fp = norm(r?.finder?.phone);
         const fe = norm(r?.finder?.email);
-        if (!(fn.includes(finder) || fp.includes(finder) || fe.includes(finder))) return false;
+        const institution = norm([r?.institution?.legalFinderName, r?.institution?.legalFinderContact,
+          r?.institution?.deliveredBy, r?.institution?.deliveringInstitution, r?.institution?.name].filter(Boolean).join(" "));
+        if (!(fn.includes(finder) || fp.includes(finder) || fe.includes(finder) || institution.includes(finder))) return false;
       }
 
       if (item) {
@@ -491,7 +497,8 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
 export function updateLostItem(input, { actor = null } = {}) {
   const denied = permissionDenied("ITEM_EDIT");
   if (denied) return denied;
-  const normalizedInput = normalizeFoundAtForValidation(input);
+  const previous = input?.id ? getLostItemById(input.id) : null;
+  const normalizedInput = normalizeFoundAtForValidation(prepareCapture(input, getCurrentUser(), { existing: previous, keepCaseWorker: true }));
   const { ok, value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.COMMIT });
 
   if (!ok) return { ok: false, errors };
@@ -499,6 +506,8 @@ export function updateLostItem(input, { actor = null } = {}) {
 
   const existing = getLostItemById(value.id);
   if (!existing) return { ok: false, errors: { id: "Datensatz nicht gefunden." } };
+  const claimCheck = validateExpenseClaims({ ...value, receipts: existing.receipts || [] });
+  if (!claimCheck.ok) return { ok: false, errors: { expenseClaims: claimCheck.error } };
   const closed = closedWorkflowDenied(existing);
   if (closed) return closed;
   if (existing.workflow && value.status !== existing.status) return legacyWorkflowDenied(existing);
@@ -577,6 +586,7 @@ export function updateLostItem(input, { actor = null } = {}) {
 export function saveDraft(input, { actor = null, fromDraft = false } = {}) {
   const denied = permissionDenied("ITEM_CREATE");
   if (denied) return denied;
+  if (input?.expenseClaims?.some((claim) => claim.settlementReceiptId)) return { ok: false, error: "Ein neuer Entwurf besitzt noch keinen bestätigten Auszahlungsbeleg." };
   if (input?.id && getLostItemById(input.id)) {
     return { ok: false, error: "Diese Fundsache ist bereits definitiv erfasst. Bitte über die Detailansicht bearbeiten." };
   }
@@ -584,7 +594,7 @@ export function saveDraft(input, { actor = null, fromDraft = false } = {}) {
   if (fromDraft && !existing) {
     return { ok: false, error: "Der Entwurf wurde nicht gefunden oder bereits übernommen. Bitte die Übersicht aktualisieren." };
   }
-  const normalizedInput = normalizeFoundAtForValidation(input);
+  const normalizedInput = normalizeFoundAtForValidation(prepareCapture(input, getCurrentUser(), { existing }));
   const { value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.DRAFT });
 
   const formatted = formatFoundAtDisplay(value);
@@ -621,6 +631,7 @@ export function saveDraft(input, { actor = null, fromDraft = false } = {}) {
 export function commitLostItem(input, { actor = null, fromDraft = false } = {}) {
   const denied = permissionDenied("ITEM_CREATE");
   if (denied) return denied;
+  if (input?.expenseClaims?.some((claim) => claim.settlementReceiptId)) return { ok: false, error: "Eine neue Erfassung besitzt noch keinen bestätigten Auszahlungsbeleg." };
   const existing = input?.id ? getLostItemById(input.id) : null;
   if (existing) {
     if (getDraftById(input.id)) removeDraftById(input.id);
@@ -629,7 +640,7 @@ export function commitLostItem(input, { actor = null, fromDraft = false } = {}) 
   if (fromDraft && !getDraftById(input?.id)) {
     return { ok: false, error: "Der Entwurf wurde nicht gefunden. Bitte die Übersicht aktualisieren." };
   }
-  const normalizedInput = normalizeFoundAtForValidation(input);
+  const normalizedInput = normalizeFoundAtForValidation(prepareCapture(input, getCurrentUser(), { existing: fromDraft ? getDraftById(input?.id) : null }));
   const { ok, value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.COMMIT });
   if (!ok) return { ok: false, errors };
   if (value.feeSelection !== undefined && !FEE_OPTIONS.some((fee) => fee.code === value.feeSelection)) {
@@ -1275,6 +1286,13 @@ function slimSnapshot(item) {
     updatedAt: item.updatedAt,
     caseWorker: item.caseWorker,
     foundAt: item.foundAt,
+    origin: item.origin || null,
+    institution: item.institution || null,
+    regime: item.regime || null,
+    roles: item.roles || null,
+    contents: item.contents || [],
+    expenseClaims: item.expenseClaims || [],
+    capturedAt: item.capturedAt || null,
     finder: item.finder,
     collectorSameAsFinder: !!item.collectorSameAsFinder,
     item: {

@@ -153,6 +153,12 @@ Die Aufbewahrungs-, Annahme- und Gebührenregeln anderer Fundbüros werden aus d
 
 ## Verbindung zu den Gebühren
 
+In allen neuen Gebührenauswahlen gibt es eine gemeinsame Position **Schlüssel – CHF 10.00**.
+Sie gilt für einen einzelnen Schlüssel oder einen ganzen Bund. Die Gegenstände
+„Einzelner Schlüssel“ und „Schlüsselbund“ bleiben zur Beschreibung unterscheidbar;
+sie lösen dieselbe Gebührenposition aus. Der alte interne Gebührencode
+`KEY_BUNDLE` bleibt ausschliesslich für bestehende Daten und Drucksnapshots lesbar.
+
 Die Kategorieauswahl und die gebührenauslösende Handlung bleiben getrennt:
 
 | Fall | Bestätigte Nutzervorgabe für Horgen |

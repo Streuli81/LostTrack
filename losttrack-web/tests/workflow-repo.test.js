@@ -39,6 +39,33 @@ function pay(payments) {
 }
 const payment = (category, type, amountCents) => ({ category, type, amountCents });
 
+test("Spätere Finderlohnzahlung verwendet das Finderschreiben ohne weitere Herausgabe", () => {
+  savePlan({ rewardCents: 1000 });
+  confirm(prepare({ payments: [payment("REWARD", "IN", 1000)] }));
+  const before = items.getLostItemById(item.id);
+  const job = prepare({ kind: "PAYMENT", documentKind: "FINDER_HANDOVER", parts: [],
+    recipient: "TEST Finder", payments: [payment("REWARD", "OUT", 1000)] });
+  const result = confirm(job);
+  assert.equal(result.receipt.documentKind, "FINDER_HANDOVER");
+  assert.equal(result.item.workflow.movements.length, before.workflow.movements.length);
+  assert.equal(result.item.workflow.payments.REWARD.paidCents, 1000);
+  const reprint = success(workflow.reprintWorkflowReceipt({ id: item.id, receiptId: result.receipt.id }));
+  assert.equal(reprint.job.receipt.documentKind, "FINDER_HANDOVER");
+});
+
+test("Ungültige Schreiben und Auszahlungen im Eigentümerschreiben werden abgewiesen", () => {
+  savePlan({ rewardCents: 1000 });
+  const before = snapshot();
+  for (const params of [
+    { kind: "PAYMENT", documentKind: "FUND", payments: [payment("REWARD", "IN", 1000)] },
+    { kind: "FUND", documentKind: "OWNER_HANDOVER", payments: [] },
+    { kind: "PAYMENT", documentKind: "OWNER_HANDOVER", payments: [payment("REWARD", "OUT", 1000)] },
+  ]) {
+    assert.equal(workflow.prepareWorkflowReceipt({ id: item.id, recipient: "TEST", parts: [], ...params }).ok, false);
+    assert.deepEqual(snapshot(), before);
+  }
+});
+
 beforeEach(() => {
   data = new Map();
   failWrite = null;
@@ -65,7 +92,7 @@ beforeEach(() => {
   item = success(items.commitLostItem(input)).item;
 });
 
-test("Gebühren für Schlüssel, ganzen Bund und Mobilvermittlung bleiben getrennte Tarifpositionen", () => {
+test("Historische Schlüsselbundtarife und Mobilvermittlung bleiben lesbar und korrekt berechnet", () => {
   const saved = savePlan({ parts: [
     { id: "key", label: "Einzelschlüssel", quantity: 1, feeCode: "KEY" },
     { id: "bundle", label: "Bund mit sieben Schlüsseln", quantity: 1, feeCode: "KEY_BUNDLE" },

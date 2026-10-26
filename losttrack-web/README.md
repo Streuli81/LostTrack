@@ -64,6 +64,32 @@ Es sind keine zusätzlichen Testpakete erforderlich.
 
 ## Entwürfe weiterbearbeiten
 
+Für **Haus-/Anstaltsfunde** (beispielsweise Spital oder Geschäftslokal) werden
+Einrichtung, Übergabekette, ursprüngliche Fundperson, Überbringer und rechtlich
+relevante Finderstelle getrennt erfasst. Finderlohn ist bei dieser Fundart
+gesperrt; es wird kein persönlicher Verzicht der Fundperson erklärt. Finderrechte
+und Eigentum werden nicht automatisch zugewiesen. Bedienung und offene rechtliche
+Punkte: [HAUS-UND-ANSTALTSFUNDE.md](docs/HAUS-UND-ANSTALTSFUNDE.md).
+
+Neue Fundsachen übernehmen die Sachbearbeitung automatisch aus der Anmeldung.
+Erfassungsdatum/-zeit werden automatisch gespeichert; Fund, Anzeige, Bekanntmachung,
+Eingang und tatsächlicher Aufbewahrungsbeginn werden getrennt manuell angegeben.
+Die frühere Kopplung an die Bekanntmachung gilt nicht mehr für neue Fälle.
+Unter **Fundart / Fundregime** werden gewöhnliche Funde, Haus-/Anstaltsfunde,
+ÖV-Funde und Sonderfälle bewusst eingeordnet. Unter **Fundumgebung** lassen
+sich öffentliche Funde, ÖV-Funde, Gebäude/Anstalt, Privatgrund und Sonstiges trennen.
+ÖV-Funde erhalten zusätzliche Angaben und keine normale Horgner Aufbewahrungsfrist.
+Bedienung, Altbestandsverhalten und offene Rechtsfragen stehen in
+[ERFASSUNG-UND-FUNDUMGEBUNG.md](docs/ERFASSUNG-UND-FUNDUMGEBUNG.md).
+
+Auslagen können unabhängig von einer Zahlungsbuchung angemeldet und mit Begründung
+geprüft werden. Der Status **Bezahlt** benötigt einen passenden bestätigten
+Auslagen-Auszahlungsbeleg. Der konkrete Anspruchsteller ist separat zu erfassen;
+ein Überbringer erhält nicht automatisch Finderrechte. Fundbargeld und andere
+Inhalte lassen sich als eigene Bestandteile dokumentieren, ohne sie als Gebühr zu
+buchen. Erlöse und offene Fundwerte verhindern einen voreiligen Gesamtabschluss.
+Details und Grenzen: [FUNDREGIME-AUSLAGEN-UND-FUNDWERTE.md](docs/FUNDREGIME-AUSLAGEN-UND-FUNDWERTE.md).
+
 1. Als ADMIN oder EDITOR unter **Neue Fundsache** Angaben erfassen und
    **Entwurf speichern** wählen. Noch fehlende Pflichtangaben sind bei einem
    Entwurf erlaubt; vorhandene Formatfehler werden angezeigt.
@@ -107,17 +133,23 @@ Die Detailansicht trennt jetzt **Verbleib der Gegenstände**, **Zahlungen** und
 **Gesamtabschluss**. Eine herausgegebene Sache bleibt als Vorgang offen, solange
 beispielsweise ein Teil des Finderlohns noch auszuzahlen ist.
 
-1. Unter **Gegenstände, Gebühren und offene Aufgaben festlegen** die Teile und
-   Mengen erfassen. Für jeden Teil die Gebührenauswahl bewusst treffen:
-   einzelner Schlüssel CHF 10.00, ganzer Schlüsselbund CHF 10.00, tatsächlich
+1. Unter **Gegenstände, Gebühren und offene Aufgaben festlegen** die Gegenstände
+   erfassen. Es gibt kein Mengenfeld. Bisher gespeicherte Mengen bleiben erhalten.
+   Für jeden Gegenstand die Gebührenauswahl bewusst treffen:
+   **Schlüssel CHF 10.00** (auch für einen ganzen Bund), tatsächlich
    vermitteltes Mobiltelefon CHF 20.00, sonst gebührenfrei. Bei der Neuerfassung
    steht die Gebührenauswahl bereits im Formular zur Verfügung.
 2. Finderlohn und Auslagenersatz separat festlegen. **Leer** bedeutet ungeklärt;
    wenn keine Auslagen bestehen, ausdrücklich **0.00** eintragen. Bei Auslagen den
    Kostenträger beziehungsweise Empfänger auswählen. Danach **Plan speichern**.
-3. Persönliche Herausgabe, Weitergabe, reine Zahlung oder Fundannahme wählen.
-   Empfänger, Teilmengen und nur die tatsächlich auszuführenden Zahlungen angeben.
-   Für verschiedene Personen getrennte Quittungen erstellen.
+3. Unter **Schreiben vorbereiten und drucken** aus genau drei Schreiben wählen:
+   **Fundquittung**, **Herausgabe an Eigentümer**, **Herausgabe an Finder**.
+   Bei einer Herausgabe die zu übergebenden Gegenstände anhaken; es wird jeweils
+   der noch vorhandene Bestand dieser Position übernommen. Empfänger und nur die
+   tatsächlich auszuführenden Zahlungen angeben. Für eine spätere Zahlung beim
+   passenden Herausgabeschreiben **Nur Zahlung zu diesem Schreiben** wählen.
+   Dies bestätigt keine weitere Gegenstandsübergabe. Für verschiedene Personen
+   getrennte Quittungen erstellen.
 4. **Quittung vorbereiten und drucken** öffnet den Druckablauf. Dabei werden
    zunächst weder Übergabe noch Zahlung gespeichert. Danach nur dann **Ja,
    gedruckt und Vorgang tatsächlich erfolgt** wählen, wenn Ausdruck und Übergabe
@@ -133,12 +165,21 @@ beispielsweise ein Teil des Finderlohns noch auszuzahlen ist.
    erledigt und keine Sperren oder Entscheidungen offen sind. Für spätere
    Änderungen ist eine begründete, protokollierte Wiederöffnung erforderlich.
 
-Teilherausgaben und Teilzahlungen sind möglich. Verwertung wird ausschließlich
+Einzelne Gegenstandspositionen und Teilzahlungen sind möglich. Innerhalb einer
+Position ist in der Oberfläche keine Teilmenge mehr auswählbar. Verwertung wird
+unter **Verwertung dokumentieren (kein Schreiben)** ausschliesslich
 als bereits fachlich freigegebene Maßnahme mit Begründung dokumentiert; ein
 Fristablauf gibt nichts automatisch frei. Erlasse, Rückerstattungen und andere
 ungeklärte Ausnahmen werden nicht durch erfundene Buchungsregeln ersetzt.
 
 Die Sicherung prüft und erhält auch die neuen Workflow- und Quittungsdaten.
+Die Fundquittung enthält keine Gebührenpositionen oder Betragstabelle. Die
+ausdrückliche Finderlohnwahl und der vereinbarte Verzichtstext mit gemeinsamem
+Unterschriftsfeld bleiben erhalten; dies ist keine rechtliche Freigabe.
+Die Druckdarstellung blendet den übrigen Seiteninhalt vollständig aus, damit
+dieser keine leeren Zusatzseiten erzeugt. Kurze Fund-, Eigentümer- und
+Finderquittungen wurden als einseitige A4-PDFs geprüft; lange Inhalte können auf
+weitere Seiten fliessen. Ein echter Papierausdruck bleibt manuell zu prüfen.
 Die Oberfläche wurde automatisiert mit künstlichen Daten in einem separaten
 Edge-Profil geprüft, einschließlich PDF und Nachdruck. Der Druckaufruf war dabei
 simuliert; der echte Druckdialog beziehungsweise Papierdruck bleibt manuell zu

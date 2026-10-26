@@ -3,6 +3,8 @@
  * Die Anzeige weist nur auf eine rechtliche Prüfung hin; sie ordnet keine
  * Versteigerung, Verwertung oder Eigentumsübertragung an.
  */
+import { hasSpecialJurisdiction, isTransportFind } from "./captureContext.js";
+
 export const RETENTION_RULES = {
   PUBLIC_GROUND_ZH: {
     auctionReviewMonths: 12,
@@ -13,8 +15,17 @@ export const RETENTION_RULES = {
 
 /** Berechnet beide Fristen ab ihren getrennt zu erfassenden gesetzlichen Ereignissen. */
 export function calculateRetention(item) {
+  if (hasSpecialJurisdiction(item)) return {
+    ruleKey: isTransportFind(item) ? "TRANSPORT_REFERRAL" : "JURISDICTION_REVIEW",
+    custodyStartDate: item?.retention?.custodyStartDate || "", custodyStartTime: item?.retention?.custodyStartTime || "",
+    noticeDate: item?.retention?.noticeDate || "", noticeTime: item?.retention?.noticeTime || "",
+    noticeType: item?.retention?.noticeType || "", auctionReviewDate: "", finderAcquisitionReviewDate: "",
+    startDate: "", storageDeadline: "", ownershipDeadline: "",
+  };
   const custodyStart = parseCivilDate(item?.retention?.custodyStartDate);
-  const noticeStart = parseCivilDate(item?.retention?.noticeDate);
+  const noticeStart = parseCivilDate(item?.retention?.dateModel === "SEPARATE"
+    ? item.retention.finderBasis === "REPORT" ? item.retention.reportedDate : item.retention.finderBasis === "PUBLICATION" ? item.retention.noticeDate : ""
+    : item?.retention?.noticeDate);
   const rule = RETENTION_RULES.PUBLIC_GROUND_ZH;
 
   return {
@@ -38,6 +49,7 @@ export function calculateRetention(item) {
 /** Status zur Einjahresgrenze nach Art. 721 ZGB; diese ist keine automatische Verwertungsfreigabe. */
 export function getRetentionStatus(item, today = new Date()) {
   if (item?.retention?.completedAt) return "COMPLETED";
+  if (hasSpecialJurisdiction(item)) return "REVIEW_REQUIRED";
 
   const deadline = parseCivilDate(item?.retention?.auctionReviewDate);
   if (!deadline) return "REVIEW_REQUIRED";

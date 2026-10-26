@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ITEM_CATALOG } from "../src/data/itemCatalog.js";
 import { searchItems, catalogFee, selectCatalogItem } from "../src/domain/itemCatalog.js";
-import { normalizeWorkflow } from "../src/domain/workflow.js";
+import { normalizeWorkflow, SELECTABLE_FEES, currentFeeCode } from "../src/domain/workflow.js";
 import { normalizeLostItem } from "../src/domain/lostItem.js";
 
 test("Alle 80 Gegenstände sind eindeutig und über ihre Suchwörter auffindbar", () => {
@@ -11,6 +11,17 @@ test("Alle 80 Gegenstände sind eindeutig und über ihre Suchwörter auffindbar"
   for (const entry of ITEM_CATALOG) for (const query of [entry.label, ...entry.aliases]) {
     assert.ok(searchItems(query).some((match) => match.key === entry.key), query);
   }
+});
+
+test("Eine gemeinsame Schlüsselgebühr; historische Schlüsselbundcodes bleiben lesbar", () => {
+  assert.equal(SELECTABLE_FEES.filter((fee) => fee.label.includes("Schlüssel")).length, 1);
+  assert.equal(SELECTABLE_FEES.some((fee) => fee.code === "KEY_BUNDLE"), false);
+  assert.equal(catalogFee("keys"), "KEY");
+  assert.equal(catalogFee("key_bundle"), "KEY");
+  assert.equal(currentFeeCode("KEY_BUNDLE"), "KEY");
+  const legacy = normalizeWorkflow({ item: { manualLabel: "Alter Bund" }, feeSelection: "KEY_BUNDLE" });
+  assert.equal(legacy.parts[0].feeCode, "KEY_BUNDLE");
+  assert.equal(legacy.payments.FEE.dueCents, 1000);
 });
 
 test("Schweizer Synonyme, Umlaute und mehrdeutige Wörter", () => {
@@ -24,7 +35,7 @@ test("Schweizer Synonyme, Umlaute und mehrdeutige Wörter", () => {
 
 test("Auswahl übernimmt Bezeichnung und Gebühr in die spätere Zahlungsplanung", () => {
   const original = { item: { description: "rot", manualLabel: "alt" }, feeSelection: "UNSET" };
-  for (const [key, fee, cents] of [["keys", "KEY", 1000], ["key_bundle", "KEY_BUNDLE", 1000],
+  for (const [key, fee, cents] of [["keys", "KEY", 1000], ["key_bundle", "KEY", 1000],
     ["car_key", "KEY", 1000], ["phone", "MOBILE_MEDIATION", 2000], ["scarf", "NONE", 0]]) {
     const selected = selectCatalogItem(original, key);
     assert.equal(selected.feeSelection, fee);

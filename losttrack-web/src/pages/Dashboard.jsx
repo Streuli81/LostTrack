@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { hasPermission } from "../core/auth/auth.js";
 import { listDrafts, listLostItems } from "../core/storage/lostItemRepo.js";
 import { getWorkflowSummary } from "../domain/workflow.js";
+import { isTransportFind, isInstitutionFind, institutionRightsChecked } from "../domain/captureContext.js";
 import { DASHBOARD_HINTS, dashboardItems, dashboardCounts, filterDashboardItems } from "../domain/dashboard.js";
 
 function dateTime(value) {
@@ -82,6 +83,9 @@ export default function Dashboard() {
               <Link to={"/items/" + encodeURIComponent(item.id)} style={recordLink}>
                 <strong>{item.fundNo || "Ohne Fundnummer"} – {itemLabel(item)}</strong>
                 <p style={{ color: hint.color, fontWeight: 700 }}>{hint.label}</p>
+                {isTransportFind(item) && <p><strong>ÖV-Fund: Zuständigkeit / Weiterleitung prüfen</strong><br />Verkehrsunternehmen: {item.origin.operator || "Noch zu klären"}</p>}
+                {isInstitutionFind(item) && <p><strong>Haus-/Anstaltsfund: {item.institution?.name || "Einrichtung noch zu klären"}</strong><br />
+                  Finderzuordnung: {institutionRightsChecked(item) ? "Fachlich geprüft" : "Noch zu prüfen"}</p>}
                 {item.item?.description && <p>Merkmale: {item.item.description}</p>}
                 <p>Fundort: {item.foundAt?.location || "—"} · Funddatum: {item.foundAt?.date || "—"}</p>
                 <p>Verbleib: {summary.physicalLabel}<br />Vorgang: {summary.overallLabel}</p>

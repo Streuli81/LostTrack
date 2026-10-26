@@ -1,9 +1,37 @@
 # Fachliche Vorgaben für den neuen LostTrack-Ablauf
 
-Stand: 25.10.2026. Diese Datei beschreibt die bestätigten Anforderungen und den
+Stand: 26.10.2026. Diese Datei beschreibt die bestätigten Anforderungen und den
 inzwischen implementierten technischen Ablauf. Die Tests sind am Ende getrennt
 von offenen fachlichen Fragen aufgeführt. Die Umsetzung ersetzt keine
 verbindlichen rechtlichen Vorgaben.
+
+## Vereinfachte Erfassung und Schreiben (bestätigt am 26.10.2026)
+
+- Die Karte zur Ablaufplanung enthält keine Auswahl der Anzahl. Neue Positionen
+  stehen für jeweils eine Fundsache beziehungsweise einen ganzen Schlüsselbund.
+  Bereits gespeicherte Mengen und Teilherausgaben bleiben als Daten erhalten.
+- Die Gebührenauswahl enthält nur **Schlüssel – CHF 10.00**, ohne getrennte
+  Positionen für einzelne Schlüssel und Schlüsselbunde. Alte Gebührencodes und
+  Drucksnapshots werden weiterhin gelesen; ihre Beträge werden nicht umgerechnet.
+- Die Schreiben-Auswahl enthält in dieser Reihenfolge ausschliesslich
+  **Fundquittung**, **Herausgabe an Eigentümer**, **Herausgabe an Finder**.
+- Bei Herausgaben werden Gegenstandspositionen angehakt. Eine Position wird mit
+  ihrem gesamten noch vorhandenen Bestand übergeben. Teilmengen innerhalb einer
+  Position lassen sich in dieser Oberfläche nicht mehr auswählen.
+- Spätere Zahlungen werden über das passende Herausgabeschreiben mit **Nur
+  Zahlung zu diesem Schreiben** bestätigt. Der Beleg kennzeichnet ausdrücklich,
+  dass keine weitere Gegenstandsübergabe erfolgt. Die interne Zahlungsbuchung
+  bleibt von einer Herausgabe getrennt. Historische Belege weiterer Arten bleiben
+  erhalten und nachdruckbar, sofern ein Drucksnapshot vorliegt.
+- Verwertung ist ein eigener dokumentierter Vorgang ausserhalb der Schreiben-Auswahl.
+- Die Fundquittung enthält weder Gebührenpositionen noch eine Tabelle mit
+  Gebühren, Finderlohn oder Auslagenersatz. Die zuvor ausdrücklich vereinbarte
+  Finderlohnwahl/Verzichtserklärung bleibt als Text mit gemeinsamem
+  Unterschriftsfeld erhalten. Die rechtliche Freigabe dieses Textes ist weiter offen.
+- Die Druckvorlage blendet den übrigen App-Inhalt ohne verbleibenden Layoutplatz
+  aus. Kurze Beispiele aller drei Schreiben wurden als genau einseitige A4-PDFs
+  geprüft, langer Inhalt über mehrere Seiten. Daraus folgt keine Bestätigung
+  eines physischen Ausdrucks auf dem Drucker des Projektverantwortlichen.
 
 ## Vom Projektverantwortlichen bestätigt
 
@@ -131,7 +159,8 @@ berechtigte Person weiterzuzahlen ist oder bereits vom Fundbüro getragene Koste
 deckt. Für verschiedene zahlende und empfangende Personen sind getrennte
 Quittungen erforderlich. Die Eigentümer-Herausgabe erlaubt keine Finder-Auszahlung
 an einen fälschlich als Eigentümer bezeichneten Empfänger. Solche Auszahlungen
-erfolgen über eine eigene Zahlungsquittung. Überzahlungen und Auszahlungen ohne
+erfolgen mit **Herausgabe an Finder** und dem Haken **Nur Zahlung zu diesem Schreiben**,
+wenn keine weitere Gegenstandsübergabe erfolgt. Überzahlungen und Auszahlungen ohne
 vorhandene Einzahlung werden abgewiesen.
 
 Noch zu klären sind insbesondere die Verrechnung bei mehreren Gegenständen,

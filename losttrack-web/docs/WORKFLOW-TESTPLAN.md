@@ -58,10 +58,10 @@ der Detailansicht **Gegenstände, Gebühren und offene Aufgaben festlegen** öff
 
 Mit dem gerade vorbereiteten Schlüsseltest:
 
-1. Den gespeicherten Plan verwenden. Unter **Persönliche Übergabe oder Zahlung
-   vorbereiten** die Herausgabe an Eigentümer/Abholer wählen.
-2. Einen erfundenen Empfänger eintragen und die Menge `1` des Schlüsseltests
-   auswählen. Bei **Gebühren – Einnahme heute** `10.00` eintragen.
+1. Den gespeicherten Plan verwenden. Unter **Schreiben vorbereiten und drucken**
+   das Schreiben **Herausgabe an Eigentümer** wählen.
+2. Einen erfundenen Empfänger eintragen und den Schlüssel zur Übergabe anhaken.
+   Bei **Gebühren – Einnahme heute** `10.00` eintragen.
 3. **Quittung vorbereiten und drucken** wählen. Im Druckdialog abbrechen.
 4. Anschließend **Abgebrochen / nicht erfolgt** wählen.
 5. Prüfen: Gegenstand weiterhin aufbewahrt, abgegebene Menge unverändert,
@@ -93,10 +93,13 @@ Erwartet:
 Einen neuen Testfall anlegen, diesmal mit **Finderlohn gewünscht**. In der
 Detailansicht den Plan auf zwei Gegenstandspositionen aufteilen:
 
-| Position | Menge | Gebühr |
-| --- | ---: | ---: |
-| TEST Schlüsselbund | 1 | CHF 10.00 pro Bund |
-| TEST Regenschirm | 1 | Keine Gebühr |
+| Position | Gebührenauswahl |
+| --- | --- |
+| TEST Schlüsselbund | Schlüssel – CHF 10.00 |
+| TEST Regenschirm | Übrige Fundsache – gebührenfrei |
+
+Die Positionen einzeln erfassen. Es gibt kein Mengenfeld; bei der Herausgabe
+wird durch Anhaken ausgewählt, welche Positionen übergeben werden.
 
 Als frei gewählte, rein fiktive Testbeträge Finderlohn `30.00` und Auslagenersatz
 `5.00` festlegen. Für diesen Versuch als Auslagenempfänger **Finder / andere
@@ -117,8 +120,9 @@ Berechnung von Finderlohn oder Auslagenersatz. **Plan speichern** wählen.
 
 ### Teilzahlung und tatsächlicher Zahlungsempfänger
 
-5. **Nur Ein- / Auszahlung, keine Gegenstandsübergabe** wählen. Als Empfänger den
-   tatsächlich gemeinten Test-Finder angeben, nicht den Eigentümer.
+5. **Herausgabe an Finder** wählen und **Nur Zahlung zu diesem Schreiben, keine
+   weitere Gegenstandsübergabe** anhaken. Als Empfänger den tatsächlich gemeinten
+   Test-Finder angeben, nicht den Eigentümer.
 6. Zunächst Finderlohnauszahlung CHF 10.00 bestätigen. Es darf kein Gegenstand
    erneut übergeben werden. Vom Finderlohn müssen noch CHF 20.00 offen bleiben.
 7. In einem weiteren Zahlungsvorgang Finderlohnauszahlung CHF 20.00 und

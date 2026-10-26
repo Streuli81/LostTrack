@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { searchLostItems } from "../core/storage/lostItemRepo";
 import { getWorkflowSummary } from "../domain/workflow.js";
+import { isInstitutionFind } from "../domain/captureContext.js";
 
 export default function Search() {
   const nav = useNavigate();
@@ -44,7 +45,7 @@ export default function Search() {
           />
         </Field>
 
-        <Field label="Finder (Name / Telefon / E-Mail)">
+        <Field label="Fundperson / Finderstelle / Überbringer">
           <input
             type="text"
             value={finder}
@@ -140,7 +141,8 @@ export default function Search() {
                 </div>
 
                 <div style={{ marginTop: 6, display: "flex", gap: 14, flexWrap: "wrap", color: "var(--muted)", fontSize: 13 }}>
-                  <span>Finder: {r?.finder?.name || "—"}</span>
+                  <span>{isInstitutionFind(r) ? "Fundperson" : "Finder"}: {[r?.finder?.firstName, r?.finder?.lastName].filter(Boolean).join(" ") || r?.finder?.name || "—"}</span>
+                  {isInstitutionFind(r) && <span>Finderstelle (Zuordnung prüfen): {r.institution?.legalFinderName || "Noch offen"}</span>}
                   <span>Tel: {r?.finder?.phone || "—"}</span>
                   <span>Ort: {r?.foundAt?.location || "—"}</span>
                   <span>Datum: {r?.foundAt?.date || "—"}</span>
