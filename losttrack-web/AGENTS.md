@@ -22,6 +22,33 @@ Diese Anforderungen sind vereinbart; ihre Nennung bedeutet nicht, dass sie berei
 - Kassenbuch mit Ein- und Auszahlungen.
 - Nachvollziehbare Änderungsprotokolle.
 - Benutzerrollen `ADMIN`, `EDITOR` und `VIEWER`.
+- Einsatzgemeinde: Horgen. Die neu bestätigten Workflow-Vorgaben stehen in
+  [docs/WORKFLOW.md](docs/WORKFLOW.md): persönliche Übergabe, Herausgabebestätigung
+  mit Quittungsdruck, getrennte Gebühren/Finderlohn/Auslagenersatz, Gebührenauswahl
+  pro Sache nach kommunalem Tarif und Abschluss erst nach vollständiger Erledigung.
+  Bei Druckabbruch bleibt die Herausgabe offen; der Browserdruckdialog allein
+  darf keine Herausgabe bestätigen. Vorgeschlagene Statuswerte und offene Gebührendetails ausdrücklich
+  von bestätigten Anforderungen unterscheiden.
+- Gebühren laut Projektverantwortlichem nur bei gefundenen Schlüsseln und bei
+  der Vermittlung von Mobiltelefonen; übrige Fundsachen gebührenfrei.
+  Bestätigt: CHF 20.00 pro vermitteltem Mobiltelefon; CHF 10.00 für einen einzelnen
+  Schlüssel oder einen ganzen Schlüsselbund, nicht pro Schlüssel am Bund.
+  Finderlohn und Auslagenersatz davon unabhängig separat führen.
+
+## Fortschritt nach der ursprünglichen Bestandsaufnahme
+
+Die folgende Bestandsaufnahme ist historisch. Inzwischen sind gemeinsame
+Benutzerverwaltung/Anmeldung, Rollenprüfungen, Sicherung/Wiederherstellung und
+Entwurfsweiterbearbeitung ergänzt worden. Der neue Workflow trennt Verbleib,
+Zahlungsstände und Abschluss. Herausgaben und damit verknüpfte Buchungen werden
+erst nach ausdrücklicher Druck-/Vorgangsbestätigung gespeichert. Neue Quittungen
+werden mit unveränderlichem Drucksnapshot gespeichert; Nachdrucke buchen nichts.
+Historische Quittungsmetadaten ohne Snapshot nicht als bestätigten Druck ausgeben.
+Die spätere manuelle Wiederöffnung benötigt eine protokollierte Begründung.
+Die automatischen Tests laufen mit `npm.cmd test`. Zusätzliche Workflow-Vorgaben,
+Umsetzungsgrenzen und die manuelle Druckprüfung stehen in docs/WORKFLOW.md und
+docs/WORKFLOW-TESTPLAN.md. Echte Druckergebnisse nicht aus einem automatisierten
+Test mit simuliertem window.print ableiten.
 
 ## Bestätigte technische Bestandsaufnahme
 
@@ -79,7 +106,8 @@ Ungeklärte Anforderungen nicht durch Annahmen ersetzen. Bei für die Umsetzung 
 
 Noch zu klären sind insbesondere:
 
-- Zuständige Gemeinde und Kanton sowie verbindliche fachliche Vorgaben und Sonderfälle.
+- Für Horgen verbindliche fachliche Vorgaben, Gebührentarife und Sonderfälle;
+  die Einsatzgemeinde wurde inzwischen bestätigt (siehe docs/WORKFLOW.md).
 - Fristbeginn, Dauer, Aufbewahrung, Herausgabe und Voraussetzungen für Verwertung oder Eigentumsübergang. Die derzeit programmierten zwölf Monate beziehungsweise fünf Jahre sind keine bestätigte Rechtsvorgabe.
 - Genehmigter Wortlaut für Finderlohnverzicht, Auslagenersatz und die gemeinsame Unterschrift.
 - Vorgaben zur Aufbewahrung und Löschung von Personendaten, Quittungen und Protokollen.

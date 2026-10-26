@@ -79,7 +79,7 @@ export default function SettingsHome() {
       <p>Die Daten liegen in diesem Browser. Git und GitHub sichern diese Daten nicht.
         Lade regelmäßig eine Sicherungsdatei herunter und bewahre sie an einem sicheren Ort auf.</p>
       <p>Die Datei enthält Fundsachen, Entwürfe, Benutzer einschließlich Passwortprüfwerten,
-        Quittungsdaten, Kassenbuch, Änderungsprotokolle und Nummernzähler.
+        Quittungsdaten, Kassenbuch, Änderungsprotokolle, Nummernzähler und angepasste Stammdaten.
         Sie ist <strong>nicht verschlüsselt</strong> und enthält Personendaten.
         Nur an berechtigte Personen weitergeben. Eine Anmeldung wird nicht mitgesichert.</p>
       {error && <p role="alert" style={{ color: "#b00020" }}>{error}</p>}

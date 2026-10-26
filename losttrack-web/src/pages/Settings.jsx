@@ -23,6 +23,8 @@ export default function Settings() {
       <h2 style={{ margin: "0 0 10px 0" }}>Einstellungen</h2>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+        {can(me, "MASTERDATA_MANAGE") && <NavLink to="/einstellungen/stammdaten" style={tabStyle}>Stammdaten</NavLink>}
+        {can(me, "AUDIT_VIEW") && <NavLink to="/einstellungen/audit" style={tabStyle}>Änderungsprotokoll</NavLink>}
         <NavLink to="/einstellungen" end style={tabStyle}>
           Übersicht
         </NavLink>

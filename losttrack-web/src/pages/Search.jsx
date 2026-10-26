@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { searchLostItems } from "../core/storage/lostItemRepo";
+import { getWorkflowSummary } from "../domain/workflow.js";
 
 export default function Search() {
   const nav = useNavigate();
@@ -112,7 +113,7 @@ export default function Search() {
         <div style={{ display: "grid", gap: 10 }}>
           {results.map((r) => {
             const label = r?.item?.manualLabel || r?.item?.predefinedKey || "(kein Gegenstand)";
-            const status = (r.status || "OPEN").toUpperCase();
+            const status = getWorkflowSummary(r);
 
             return (
               <div
@@ -135,7 +136,7 @@ export default function Search() {
                     {r.fundNo || "(ohne Fundnummer)"} – {label}
                   </div>
 
-                  <span style={pillStyle()}>{status}</span>
+                  <span style={pillStyle()}>{status.physicalLabel} · {status.overallLabel}</span>
                 </div>
 
                 <div style={{ marginTop: 6, display: "flex", gap: 14, flexWrap: "wrap", color: "var(--muted)", fontSize: 13 }}>

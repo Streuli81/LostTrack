@@ -1,5 +1,7 @@
 import { hasPermission } from "../auth/auth.js";
 import { verifyCashbookChain } from "./lostItemRepo.js";
+import { validateStoredWorkflow } from "../../domain/workflow.js";
+import { CATALOG_KEY, validateCatalog } from "../../domain/catalogModel.js";
 
 const PREFIX = "losttrack:lostItems.";
 const RECORDS = `${PREFIX}records.v1`;
@@ -10,7 +12,7 @@ const COUNTERS = `${PREFIX}counters.v1`;
 const USERS = `${PREFIX}users.v2`;
 const SESSION = `${PREFIX}session.v1`;
 const REQUIRED = [RECORDS, DRAFTS, AUDIT, CASHBOOK, COUNTERS, USERS];
-const OPTIONAL = [`${PREFIX}users.v1`, "losttrack_users_v1", "losttrack:drafts:v1"];
+const OPTIONAL = [`${PREFIX}users.v1`, "losttrack_users_v1", "losttrack:drafts:v1", CATALOG_KEY];
 const FUND_COUNTER = /^losttrack_fundcounter_\d{4}$/;
 export const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
 
@@ -53,7 +55,10 @@ function validate(backup) {
     assert(typeof raw === "string", "Ein Datenbereich hat ein ungültiges Format.");
     try { parsed[key] = JSON.parse(raw); }
     catch { throw new Error("Ein gespeicherter Datenbereich ist beschädigt und kann nicht eingelesen werden."); }
-    if (key === COUNTERS) {
+    if (key === CATALOG_KEY) {
+      const check = validateCatalog(parsed[key]);
+      assert(check.ok, check.error);
+    } else if (key === COUNTERS) {
       assert(isObject(parsed[key]) && Object.values(parsed[key]).every((v) => Number.isSafeInteger(v) && v >= 0), "Die Nummernzähler sind ungültig.");
     } else if (FUND_COUNTER.test(key)) {
       assert(/^\d+$/.test(raw) && Number.isSafeInteger(parsed[key]) && parsed[key] >= 0, "Ein Fundnummernzähler ist ungültig.");
@@ -71,6 +76,8 @@ function validate(backup) {
       "Eine Fundsache oder ein Entwurf hat eine ungültige Datenstruktur.");
       assert(!item.id || !ids.has(item.id), "Fundsachen oder Entwürfe enthalten doppelte IDs.");
       ids.add(item.id);
+      const workflowCheck = validateStoredWorkflow(item);
+      assert(workflowCheck.ok, workflowCheck.error || "Ungültige Workflow-Daten.");
     }
   }
   const ids = new Set();

@@ -62,11 +62,91 @@ Zusätzlich werden Sicherung und Wiederherstellung einschließlich ungültiger
 Dateien, Zugriffsrechten, Abmeldung und Zurücksetzen nach Speicherfehlern geprüft.
 Es sind keine zusätzlichen Testpakete erforderlich.
 
+## Entwürfe weiterbearbeiten
+
+1. Als ADMIN oder EDITOR unter **Neue Fundsache** Angaben erfassen und
+   **Entwurf speichern** wählen. Noch fehlende Pflichtangaben sind bei einem
+   Entwurf erlaubt; vorhandene Formatfehler werden angezeigt.
+2. Zur **Übersicht** wechseln und beim gewünschten Entwurf
+   **Entwurf weiterbearbeiten** wählen. Die Übersicht zeigt alle Entwürfe an.
+3. Angaben ergänzen und erneut **Entwurf speichern** wählen. Derselbe Eintrag
+   wird aktualisiert; es entsteht kein zweiter Entwurf.
+4. Wenn die Pflichtangaben vollständig sind, **Definitiv erfassen** wählen.
+   Danach öffnet sich die Detailansicht, und der Entwurf verschwindet aus der
+   Entwurfsliste. Die definitive Übernahme erfolgt im geöffneten Formular.
+
+Die angezeigte Fundnummer eines Entwurfs ist eine Vorschau und noch nicht
+verbindlich. Entwürfe erhalten eine eigene interne ID; auch ältere Entwürfe ohne
+ID können geladen und beim nächsten Speichern mit einer festen ID versehen
+werden. Eine wiederholte Übernahme derselben Entwurfs-ID erzeugt keinen weiteren
+definitiven Datensatz und überschreibt keine späteren Bearbeitungen.
+Bereits definitive Fundsachen werden über **Bearbeiten → Änderungen speichern**
+geändert und können nicht erneut als Entwurf gespeichert werden.
+
+Ein nicht mehr vorhandener Entwurf zeigt einen Hinweis statt eines leeren
+Erfassungsformulars. VIEWER haben keinen Zugriff auf die Entwurfsbearbeitung.
+Die zwei bisherigen Fundnummernzähler sind weiterhin getrennt; ihre
+Vereinheitlichung ist ein eigener Arbeitsschritt.
+
+Automatisch geprüft wurden feste IDs, wiederholtes Speichern, fehlende
+Pflichtangaben, definitive und wiederholte Übernahme, ältere Entwürfe ohne ID,
+Rollenrechte und der Erhalt von Entwürfen nach einer Wiederherstellung.
+Die praktische Browserprüfung dieses neuen Ablaufs steht noch aus: Mit Testdaten
+einen unvollständigen Entwurf speichern, über die Übersicht wieder öffnen,
+ergänzen und speichern. Danach prüfen, dass nur ein Entwurf vorhanden ist,
+und ihn definitiv erfassen. Anschließend die Übersicht aktualisieren und prüfen,
+dass genau eine definitive Fundsache und kein zugehöriger Entwurf vorhanden sind.
+
 Der Build erzeugt Dateien in `dist`. Ein erfolgreicher Build ersetzt keine
 Funktionstests. Die allgemeine ESLint-Prüfung enthält weiterhin bekannte Fehler
 in anderen Anwendungsbereichen. Eine vollständige Browserprüfung steht noch aus.
 
-## Benutzerrollen
+## Herausgabe, Gebühren und Gesamtabschluss
+
+Die Detailansicht trennt jetzt **Verbleib der Gegenstände**, **Zahlungen** und
+**Gesamtabschluss**. Eine herausgegebene Sache bleibt als Vorgang offen, solange
+beispielsweise ein Teil des Finderlohns noch auszuzahlen ist.
+
+1. Unter **Gegenstände, Gebühren und offene Aufgaben festlegen** die Teile und
+   Mengen erfassen. Für jeden Teil die Gebührenauswahl bewusst treffen:
+   einzelner Schlüssel CHF 10.00, ganzer Schlüsselbund CHF 10.00, tatsächlich
+   vermitteltes Mobiltelefon CHF 20.00, sonst gebührenfrei. Bei der Neuerfassung
+   steht die Gebührenauswahl bereits im Formular zur Verfügung.
+2. Finderlohn und Auslagenersatz separat festlegen. **Leer** bedeutet ungeklärt;
+   wenn keine Auslagen bestehen, ausdrücklich **0.00** eintragen. Bei Auslagen den
+   Kostenträger beziehungsweise Empfänger auswählen. Danach **Plan speichern**.
+3. Persönliche Herausgabe, Weitergabe, reine Zahlung oder Fundannahme wählen.
+   Empfänger, Teilmengen und nur die tatsächlich auszuführenden Zahlungen angeben.
+   Für verschiedene Personen getrennte Quittungen erstellen.
+4. **Quittung vorbereiten und drucken** öffnet den Druckablauf. Dabei werden
+   zunächst weder Übergabe noch Zahlung gespeichert. Danach nur dann **Ja,
+   gedruckt und Vorgang tatsächlich erfolgt** wählen, wenn Ausdruck und Übergabe
+   beziehungsweise Zahlung tatsächlich erfolgt sind. Bei Abbruch bleibt alles
+   unbestätigt. Bereits früher bestätigte Zahlungen bleiben erhalten.
+5. Neue Quittungen lassen sich unverändert **nachdrucken**. Dabei entsteht keine
+   zweite Buchung. Nachträgliche Änderungen am Namen, Tarif oder Gegenstand ändern
+   die gespeicherte Druckfassung nicht. Alte Quittungen ohne gespeicherten
+   Snapshot bleiben als Altbelege sichtbar, erhalten aber keinen erfundenen
+   Nachweis eines erfolgreichen früheren Ausdrucks.
+6. **Vorgang vollständig abschließen** ist erst möglich, wenn sämtliche Teile
+   abschließend behandelt, alle erforderlichen Ein-/Auszahlungen vollständig
+   erledigt und keine Sperren oder Entscheidungen offen sind. Für spätere
+   Änderungen ist eine begründete, protokollierte Wiederöffnung erforderlich.
+
+Teilherausgaben und Teilzahlungen sind möglich. Verwertung wird ausschließlich
+als bereits fachlich freigegebene Maßnahme mit Begründung dokumentiert; ein
+Fristablauf gibt nichts automatisch frei. Erlasse, Rückerstattungen und andere
+ungeklärte Ausnahmen werden nicht durch erfundene Buchungsregeln ersetzt.
+
+Die Sicherung prüft und erhält auch die neuen Workflow- und Quittungsdaten.
+Die Oberfläche wurde automatisiert mit künstlichen Daten in einem separaten
+Edge-Profil geprüft, einschließlich PDF und Nachdruck. Der Druckaufruf war dabei
+simuliert; der echte Druckdialog beziehungsweise Papierdruck bleibt manuell zu
+prüfen. Die vollständige Anleitung steht im
+[Workflow-Testplan](docs/WORKFLOW-TESTPLAN.md), die bestätigten Vorgaben und offenen
+Fragen in [WORKFLOW.md](docs/WORKFLOW.md).
+
+## Berechtigungen
 
 | Vorgang | ADMIN | EDITOR | VIEWER |
 | --- | --- | --- | --- |
@@ -78,6 +158,8 @@ in anderen Anwendungsbereichen. Eine vollständige Browserprüfung steht noch au
 | Kassenbuch ansehen und drucken | Ja | Ja | Ja |
 | Ein- und Auszahlungen buchen | Ja | Ja | Nein |
 | Benutzer verwalten | Ja | Nein | Nein |
+| Stammdaten verwalten | Ja | Nein | Nein |
+| Änderungsprotokoll (Audit) in den Einstellungen ansehen | Ja | Nein | Nein |
 | Daten sichern und wiederherstellen | Ja | Nein | Nein |
 
 Die bestehende Rollenverteilung wurde beibehalten und ihre Prüfung in den
@@ -190,6 +272,46 @@ Am 25.10.2026 hat der Projektverantwortliche auch die Wiederherstellung im
 Browser als erfolgreich bestätigt. Diese Rückmeldung wurde nicht vom
 Entwicklungsagenten selbst überprüft; konkrete Einzelprüfungen und das verwendete
 Browserprofil wurden nicht gesondert angegeben.
+
+## Übersicht und Änderungsprotokoll
+
+In der **Übersicht** einen Entwurf anklicken, um ihn als ADMIN oder EDITOR
+weiterzubearbeiten. Erfasste Fundsachen lassen sich ebenfalls direkt anklicken;
+die Detailseite enthält den Ablauf und den Link **Grunddaten bearbeiten**.
+VIEWER können erfasste Fundsachen ansehen und keine Entwürfe bearbeiten.
+
+Die fünf Hinweisfelder mit Zählern filtern die Liste der erfassten Fundsachen.
+Der aktive Hinweis und die Trefferzahl werden angezeigt. Mit **Alle Fundsachen
+anzeigen** wird der Filter aufgehoben. Die Übersicht zeigt alle Treffer, auch
+mehr als zwölf. Die Entwurfsliste wird von diesem Filter nicht verändert.
+Die Hinweise sind keine automatische fachliche oder rechtliche Freigabe.
+
+Das **Änderungsprotokoll (Audit)** liegt ausschliesslich unter
+**Einstellungen → Änderungsprotokoll** und ist nur für ADMIN zugänglich.
+Es lässt sich nach Fundnummer, Benutzer oder Suchwort durchsuchen.
+Dashboard, Detailansicht und Fundsachenbericht zeigen keine Audit-Ereignisse.
+Die Protokollierung läuft bei Änderungen durch EDITOR weiterhin im Hintergrund.
+
+Die Browserprüfung `node scripts/check-dashboard-ui.mjs` benötigt einen eigens
+gestarteten leeren Testbrowser auf Port 9237 und den Entwicklungsserver auf
+Port 5199. Sie verwendet künstliche Testdaten und darf niemals gegen ein normales
+Benutzerprofil ausgeführt werden. Geprüft werden alle fünf Filter samt Zählern,
+15 erreichbare Fundsachen, drei Entwürfe, Bearbeitungslinks und die Audit-Rechte.
+Domain- und Rollentests laufen mit `npm.cmd test`.
+
+## Gegenstandssuche und Stammdaten
+
+In der Erfassung sind Suche und Auswahl in einem Feld kombiniert. Beispielsweise
+`Handy` oder `Natel` eingeben und den Vorschlag `Mobiltelefon` anklicken, oder mit
+Pfeiltasten und Enter auswählen. Die Auswahl übernimmt Bezeichnung und Gebührenvorschlag.
+
+Als ADMIN unter **Einstellungen → Stammdaten** Gruppen, Gegenstände, Suchwörter
+und Gebührenvorschläge ergänzen oder ändern. Gegenstände lassen sich deaktivieren.
+Bestehende Fundsachen und Quittungen behalten ihre bisherigen Angaben. Diese
+lokalen Stammdaten und ihr Änderungsverlauf sind Teil der herunterladbaren
+Datensicherung; GitHub sichert den Browserspeicher nicht.
+
+Die Bedienung und Prüfungen sind in [docs/GEGENSTANDSKATALOG.md](docs/GEGENSTANDSKATALOG.md) beschrieben.
 
 ## Ursprüngliche Vorlagenhinweise
 

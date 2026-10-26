@@ -86,7 +86,7 @@ export function createEmptyLostItem() {
 
     item: {
       predefinedKey: "", // Key aus Auswahlliste (z.B. "wallet"), leer wenn manuell
-      manualLabel: "", // Freitext, leer wenn vordefiniert
+      manualLabel: "", // lesbare Bezeichnung / Freitext, auch bei Katalogauswahl
       category: "", // optional: z.B. "Dokumente" oder "CASH"
       brand: "",
       type: "",
@@ -282,11 +282,9 @@ export function normalizeLostItem(input) {
   const allowed = new Set(["OPEN", "RETURNED", "DISPOSED", "TRANSFERRED"]);
   if (!allowed.has(item.status)) item.status = "OPEN";
 
-  // Sicherstellen, dass genau eines von predefined/manual gesetzt ist (wenn möglich)
-  if (item.item.predefinedKey && item.item.manualLabel) {
-    // Wenn beide gesetzt wurden, bevorzugen wir vordefiniert und leeren manual
-    item.item.manualLabel = "";
-  }
+  // Katalogschlüssel und lesbare Bezeichnung gemeinsam erhalten.
+  // Quittungen und Ablauf verwenden die Bezeichnung; der Schlüssel identifiziert
+  // den Katalogeintrag auch bei einer späteren Änderung des Katalogs.
 
   return item;
 }

@@ -9,6 +9,8 @@ import Settings from "../pages/Settings.jsx";
 import SettingsHome from "../pages/SettingsHome.jsx";
 import ItemDetail from "../pages/ItemDetail.jsx";
 import Users from "../pages/Users.jsx";
+import MasterData from "../pages/MasterData.jsx";
+import AuditLog from "../pages/AuditLog.jsx";
 
 // ✅ NEU
 import Cashbook from "../pages/Cashbook.jsx";
@@ -34,6 +36,15 @@ export const router = createBrowserRouter([
 
       {
         path: "neu",
+        element: (
+          <RequirePermission action="ITEM_CREATE">
+            <NewItem />
+          </RequirePermission>
+        ),
+      },
+
+      {
+        path: "entwuerfe/:draftId/bearbeiten",
         element: (
           <RequirePermission action="ITEM_CREATE">
             <NewItem />
@@ -68,6 +79,8 @@ export const router = createBrowserRouter([
         element: <Settings />,
         children: [
           { index: true, element: <SettingsHome /> },
+          { path: "stammdaten", element: <RequirePermission action="MASTERDATA_MANAGE"><MasterData /></RequirePermission> },
+          { path: "audit", element: <RequirePermission action="AUDIT_VIEW"><AuditLog /></RequirePermission> },
           {
             path: "benutzer",
             element: (

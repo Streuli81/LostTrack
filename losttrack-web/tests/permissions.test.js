@@ -103,7 +103,23 @@ for (const role of ["admin", "editor"]) {
   }
 }
 
-test("VIEWER kann Fundsachen, Entwürfe, Protokolle und Kassenbuch ohne Änderungen lesen", () => {
+test("Audit ist für ADMIN lesbar und bleibt für EDITOR, VIEWER und abgemeldete Benutzer verborgen", () => {
+  assert.ok(repo.listAuditLog().length > 0);
+  for (const username of ["editor", "viewer"]) {
+    signIn(username);
+    const before = snapshot();
+    assert.equal(hasPermission("AUDIT_VIEW"), false);
+    assert.deepEqual(repo.listAuditLog(), []);
+    assert.deepEqual(snapshot(), before);
+  }
+  logout();
+  assert.deepEqual(repo.listAuditLog(), []);
+  signIn("admin");
+  assert.equal(hasPermission("AUDIT_VIEW"), true);
+  assert.ok(repo.listAuditLog().length > 0);
+});
+
+test("VIEWER kann Fundsachen, Entwürfe und Kassenbuch lesen, aber kein Audit", () => {
   repo.postCashbookEntry({ type: "IN", amountCents: 500, item });
   signIn("viewer");
   const before = snapshot();
@@ -111,7 +127,7 @@ test("VIEWER kann Fundsachen, Entwürfe, Protokolle und Kassenbuch ohne Änderun
   assert.equal(repo.getLostItemById(item.id).id, item.id);
   assert.equal(repo.listDrafts().length, 1);
   assert.equal(repo.searchLostItems({ item: "Testgegenstand" }).length, 1);
-  assert.ok(repo.listAuditLog().length > 0);
+  assert.equal(repo.listAuditLog().length, 0);
   assert.equal(repo.listCashbookEntries().length, 1);
   assert.equal(repo.getCashbookTotals().inCents, 500);
   assert.equal(repo.verifyCashbookChain().ok, true);

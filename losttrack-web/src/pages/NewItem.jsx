@@ -1,79 +1,46 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { previewNextFundNumber, commitNextFundNumber } from "../utils/fundNumber";
 import { createEmptyLostItem } from "../domain/lostItem";
+import { FEE_OPTIONS } from "../domain/workflow.js";
+import ItemCatalogSelect from "../components/ItemCatalogSelect.jsx";
+import { selectCatalogItem } from "../domain/itemCatalog.js";
 
 import {
   saveDraft,
   commitLostItem,
   getLostItemById,
+  getDraftById,
   updateLostItem,
 } from "../core/storage/lostItemRepo";
 
 import { validateLostItem, VALIDATION_MODE } from "../domain/lostItem.validators";
 
 export default function NewItem() {
+  const { id, draftId } = useParams();
+  return <NewItemForm key={id ? `item:${id}` : draftId ? `draft:${draftId}` : "new"}
+    recordId={id} draftId={draftId} />;
+}
+
+function NewItemForm({ recordId, draftId }) {
   const nav = useNavigate();
-  const { id } = useParams();
-
-  const isEditMode = !!id;
-
-  // Fundnummern-Logik (Vorschau vs Commit) – im Edit-Mode NICHT neu vergeben
-  const [fundNumberPreview, setFundNumberPreview] = useState("");
-  const [savedFundNumber, setSavedFundNumber] = useState("");
-  const [isFundNumberCommitted, setIsFundNumberCommitted] = useState(false);
-
-  // Domain State
-  const [data, setData] = useState(() => createEmptyLostItem());
+  const isEditMode = !!recordId;
+  const isDraftMode = !!draftId;
+  // Bei einem Wechsel der Adresse wird das Formular durch seinen key neu geladen.
+  // Die Initialisierung liest nur; sie speichert und zählt keine Nummern hoch.
+  const [initial] = useState(() => {
+    const existing = recordId ? getLostItemById(recordId) : draftId ? getDraftById(draftId) : null;
+    if ((recordId || draftId) && !existing) return { missing: true, data: createEmptyLostItem(), preview: "" };
+    const preview = recordId ? existing.fundNo : previewNextFundNumber();
+    const value = existing ? normalizeLostItemDates(existing) : { ...createEmptyLostItem(), id: crypto.randomUUID() };
+    return { missing: false, data: { ...value, fundNo: preview,
+      ...(!recordId ? { feeSelection: value.feeSelection || "UNSET" } : {}) }, preview };
+  });
+  const [data, setData] = useState(initial.data);
   const [errors, setErrors] = useState({});
-
-  // Status UI
-  const [lastAction, setLastAction] = useState(""); // "draft" | "commit" | "update" | ""
   const [lastMessage, setLastMessage] = useState("");
-
-  useEffect(() => {
-    setLastMessage("");
-    setLastAction("");
-    setErrors({});
-
-    if (isEditMode) {
-      const existing = getLostItemById(id);
-
-      if (!existing) {
-        setData(createEmptyLostItem());
-        setLastMessage("Bearbeiten nicht möglich: Datensatz nicht gefunden.");
-        return;
-      }
-
-      // ✅ Normalisieren beim Laden (damit Anzeige final ist)
-      const normalizedExisting = normalizeLostItemDates(existing);
-
-      setData(normalizedExisting);
-
-      // Fundnummer im Edit-Modus immer als verbindlich anzeigen
-      setSavedFundNumber(normalizedExisting.fundNo || "");
-      setIsFundNumberCommitted(true);
-      setFundNumberPreview(normalizedExisting.fundNo || "");
-      return;
-    }
-
-    // Neu: nur Vorschau (StrictMode-sicher)
-    const preview = previewNextFundNumber();
-    setFundNumberPreview(preview);
-
-    setData((prev) => ({
-      ...prev,
-      fundNo: preview,
-    }));
-
-    setSavedFundNumber("");
-    setIsFundNumberCommitted(false);
-  }, [isEditMode, id]);
-
-  const displayNumber = isEditMode
-    ? (data.fundNo || savedFundNumber || "")
-    : (isFundNumberCommitted ? savedFundNumber : fundNumberPreview);
+  const displayNumber = isEditMode ? data.fundNo : initial.preview;
 
   // Helper: Feld-Updates (einfach & stabil)
   function setField(path, value) {
@@ -90,11 +57,10 @@ export default function NewItem() {
 
   function handleSaveDraft() {
     setLastMessage("");
-    setLastAction("");
 
     const { value, errors: vErrors } = showErrors(VALIDATION_MODE.DRAFT, data);
 
-    const result = saveDraft(value);
+    const result = saveDraft(value, { fromDraft: isDraftMode });
     if (result.ok === false) {
       setErrors(result.errors || {});
       setLastMessage(result.error || "Entwurf konnte nicht gespeichert werden.");
@@ -102,17 +68,14 @@ export default function NewItem() {
     }
     setData(result.item);
     setErrors(result.errors || vErrors || {});
-    setLastAction("draft");
-    setLastMessage(isEditMode ? "Entwurf wurde gespeichert (Edit-Modus)." : "Entwurf (Vorschau) wurde gespeichert.");
+    setLastMessage("Entwurf wurde gespeichert. Du kannst ihn über die Übersicht weiterbearbeiten.");
   }
 
   function handleCommitOrUpdate() {
     setLastMessage("");
-    setLastAction("");
 
     const res = showErrors(VALIDATION_MODE.COMMIT, data);
     if (!res.ok) {
-      setLastAction(isEditMode ? "update" : "commit");
       setLastMessage("Speichern nicht möglich: Bitte Pflichtfelder korrigieren.");
       return;
     }
@@ -122,14 +85,12 @@ export default function NewItem() {
       const upd = updateLostItem(res.value);
       if (!upd.ok) {
         setErrors(upd.errors || {});
-        setLastAction("update");
         setLastMessage("Update fehlgeschlagen: Bitte Eingaben prüfen.");
         return;
       }
 
       setData(upd.item);
       setErrors({});
-      setLastAction("update");
       setLastMessage("Fundsache wurde aktualisiert.");
 
       // zurück zur Detailseite
@@ -137,7 +98,19 @@ export default function NewItem() {
       return;
     }
 
-    // ✅ Neu-Commit: Fundnummer verbindlich vergeben (Counter hochzählen)
+    // Ein bereits in einem anderen Fenster übernommener Entwurf darf keine
+    // weitere Fundnummer verbrauchen oder den definitiven Datensatz überschreiben.
+    const existing = getLostItemById(data.id);
+    if (existing) {
+      nav(`/items/${existing.id}`);
+      return;
+    }
+    if (isDraftMode && !getDraftById(data.id)) {
+      setLastMessage("Der Entwurf wurde nicht gefunden. Bitte die Übersicht aktualisieren.");
+      return;
+    }
+
+    // Neu-Commit: Fundnummer verbindlich vergeben.
     const committedFundNo = commitNextFundNumber();
     if (!committedFundNo) {
       setLastMessage("Keine Berechtigung zur definitiven Erfassung. Bitte erneut anmelden.");
@@ -149,21 +122,17 @@ export default function NewItem() {
       fundNo: committedFundNo,
     };
 
-    const commitResult = commitLostItem(withFundNo);
+    const commitResult = commitLostItem(withFundNo, { fromDraft: isDraftMode });
 
     if (!commitResult.ok) {
       setErrors(commitResult.errors || {});
-      setLastAction("commit");
-      setLastMessage("Commit fehlgeschlagen: Bitte Eingaben prüfen.");
+      setLastMessage(commitResult.error || "Speichern fehlgeschlagen: Bitte Eingaben prüfen.");
       return;
     }
 
     setData(commitResult.item);
-    setSavedFundNumber(committedFundNo);
-    setIsFundNumberCommitted(true);
 
     setErrors({});
-    setLastAction("commit");
     setLastMessage("Fundsache wurde definitiv erfasst (Record + Audit).");
 
     // direkt zur Detailseite
@@ -173,9 +142,17 @@ export default function NewItem() {
   // UI-Helper: Fehler anzeigen
   const err = useMemo(() => (path) => errors?.[path], [errors]);
 
+  if (initial.missing) {
+    return <section>
+      <h2>{isDraftMode ? "Entwurf nicht gefunden" : "Fundsache nicht gefunden"}</h2>
+      <p>Der Eintrag ist nicht mehr vorhanden oder wurde bereits definitiv erfasst.</p>
+      <Link to="/">Zur Übersicht</Link>
+    </section>;
+  }
+
   return (
     <section style={{ maxWidth: 1100 }}>
-      <h2 style={{ margin: "0 0 10px 0" }}>{isEditMode ? "Fundsache bearbeiten" : "Neue Fundsache"}</h2>
+      <h2 style={{ margin: "0 0 10px 0" }}>{isEditMode ? "Fundsache bearbeiten" : isDraftMode ? "Entwurf weiterbearbeiten" : "Neue Fundsache"}</h2>
 
       {/* Fundnummer */}
       <div style={{ marginBottom: 20 }}>
@@ -197,9 +174,7 @@ export default function NewItem() {
         <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
           {isEditMode
             ? "Edit-Modus: Fundnummer bleibt unverändert."
-            : (isFundNumberCommitted
-                ? "Fundnummer ist verbindlich vergeben (Commit)."
-                : "Vorschau: Fundnummer wird erst beim Commit verbindlich vergeben.")}
+            : "Vorschau: Die Fundnummer wird erst bei der definitiven Erfassung vergeben."}
         </div>
       </div>
 
@@ -466,19 +441,12 @@ export default function NewItem() {
       {/* Gegenstand */}
       <h3 style={{ marginTop: 18, marginBottom: 8 }}>Gegenstand</h3>
 
-      <Field label="Vordefiniert (Key) – optional" error={err("item.predefinedKey")}>
-        <input
-          type="text"
-          value={data.item.predefinedKey}
-          onChange={(e) => setField("item.predefinedKey", e.target.value)}
-          style={inputStyle(!!err("item.predefinedKey"))}
-          placeholder='z.B. "Schlüssel"'
-          autoComplete="off"
-          name="item_predefined_key"
-        />
-      </Field>
+      <ItemCatalogSelect value={data.item.predefinedKey} label={data.item.manualLabel}
+        onChange={(key) => setData((previous) => selectCatalogItem(previous, key, { updateFee: !isEditMode }))} />
+      {err("item.predefinedKey") && <p role="alert">{err("item.predefinedKey")}</p>}
+      {isEditMode && <p>Bestehende Gebühren und Zahlungen bleiben erhalten. Änderungen daran bitte im Ablauf auf der Detailseite vornehmen.</p>}
 
-      <Field label="Manuell (Label) – optional" error={err("item.manualLabel")}>
+      <Field label="Gegenstandsbezeichnung / manuelle Ergänzung" error={err("item.manualLabel")}>
         <input
           type="text"
           value={data.item.manualLabel}
@@ -505,14 +473,26 @@ export default function NewItem() {
         />
       </Field>
 
+      {!isEditMode && <Field label="Gemeindegebühr für diese Sache" error={err("feeSelection")}>
+        <select aria-label="Gemeindegebühr für diese Sache" value={data.feeSelection || "UNSET"} onChange={(event) => setField("feeSelection", event.target.value)} style={inputStyle(false)}>
+          {FEE_OPTIONS.map((fee) => <option key={fee.code} value={fee.code}>{fee.label}</option>)}
+        </select>
+        <p>Die Gegenstandsauswahl schlägt die Gebühr automatisch vor: Schlüssel oder ganzer Schlüsselbund CHF 10.00,
+          Mobiltelefonvermittlung CHF 20.00, übrige bestimmte Fundsachen gebührenfrei.
+          Bei Mobiltelefonen gilt der Betrag für die Vermittlung. Falls keine Vermittlung erfolgt, die Auswahl auf gebührenfrei ändern.
+          Die Auswahl allein bestätigt keine Vermittlung und bucht keine Zahlung.
+          Finderlohn und Auslagenersatz werden später getrennt festgelegt.
+          Mehrere Gegenstände und Mengen kannst du nach der Erfassung im Ablauf ergänzen.</p>
+      </Field>}
+
       {/* Buttons */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 18 }}>
-        <button type="button" onClick={handleSaveDraft} style={btnStyle(false)}>
-          Draft speichern
-        </button>
+        {!isEditMode && <button type="button" onClick={handleSaveDraft} style={btnStyle(false)}>
+          Entwurf speichern
+        </button>}
 
         <button type="button" onClick={handleCommitOrUpdate} style={btnStyle(true)}>
-          {isEditMode ? "Update (speichern)" : "Commit (definitiv)"}
+          {isEditMode ? "Änderungen speichern" : "Definitiv erfassen"}
         </button>
 
         {lastMessage && <span style={{ color: "var(--muted)" }}>{lastMessage}</span>}

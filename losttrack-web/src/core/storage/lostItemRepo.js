@@ -3,11 +3,24 @@
 import { storage } from "./storage.js";
 import { validateLostItem, VALIDATION_MODE } from "../../domain/lostItem.validators.js";
 import { getCurrentUserName, hasPermission } from "../auth/auth.js";
+import { FEE_OPTIONS, normalizeWorkflow, validateWorkflowPlan, validateStoredWorkflow } from "../../domain/workflow.js";
 
 function permissionDenied(action) {
   if (hasPermission(action)) return null;
   const error = "Keine Berechtigung für diesen Vorgang.";
   return { ok: false, error, errors: { permission: error } };
+}
+
+function closedWorkflowDenied(item) {
+  if (!item?.workflow?.closedAt) return null;
+  const error = "Der Vorgang ist abgeschlossen. Bitte zuerst mit Begründung wieder öffnen.";
+  return { ok: false, error, errors: { workflow: error } };
+}
+
+function legacyWorkflowDenied(item) {
+  if (!item?.workflow) return null;
+  const error = "Bitte den bestätigten Herausgabe- und Zahlungsablauf verwenden.";
+  return { ok: false, error, errors: { workflow: error } };
 }
 
 // ✅ Phase 1: Fristen/Retention (ZH öffentlicher Raum)
@@ -38,10 +51,24 @@ export function listLostItems() {
 }
 
 export function listDrafts() {
-  return normalizeAll(storage.getJson(KEY_DRAFTS, []));
+  return storage.getJson(KEY_DRAFTS, []).map((draft, index) =>
+    normalizeOne({ ...draft, id: draftIdentity(draft, index) }));
+}
+
+// Alte Entwürfe ohne ID bleiben ohne Schreibzugriff lesbar. Beim nächsten
+// Speichern wird diese Kennung dauerhaft übernommen. Inhalt + Position verhindern,
+// dass ein veralteter Link versehentlich auf einen anderen alten Entwurf zeigt.
+function draftIdentity(draft, index) {
+  return draft.id || `legacy-draft-${index}-${fnv1a32Hex(JSON.stringify(draft))}`;
+}
+
+export function getDraftById(id) {
+  if (!id) return null;
+  return listDrafts().find((draft) => draft.id === id) || null;
 }
 
 export function listAuditLog() {
+  if (!hasPermission("AUDIT_VIEW")) return [];
   return storage.getJson(KEY_AUDIT, []);
 }
 
@@ -131,6 +158,8 @@ export function postCashbookEntry({
 } = {}) {
   const denied = permissionDenied("CASHBOOK_POST");
   if (denied) return denied;
+  const workflowDenied = legacyWorkflowDenied(item?.id ? getLostItemById(item.id) : null);
+  if (workflowDenied) return workflowDenied;
   const t = String(type || "").toUpperCase();
   if (!(t === "IN" || t === "OUT")) return { ok: false, error: "Invalid type" };
 
@@ -247,6 +276,8 @@ export function receiveOwnerReward({
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  const workflowDenied = legacyWorkflowDenied(current);
+  if (workflowDenied) return workflowDenied;
 
   const cents = Number(amountCents);
   if (!Number.isFinite(cents) || cents <= 0 || Math.floor(cents) !== cents) {
@@ -416,6 +447,8 @@ export function changeLostItemStatus({ id, newStatus, actor = null }) {
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  const workflowDenied = legacyWorkflowDenied(current);
+  if (workflowDenied) return workflowDenied;
 
   const now = new Date().toISOString();
   const before = slimSnapshot(current);
@@ -466,6 +499,9 @@ export function updateLostItem(input, { actor = null } = {}) {
 
   const existing = getLostItemById(value.id);
   if (!existing) return { ok: false, errors: { id: "Datensatz nicht gefunden." } };
+  const closed = closedWorkflowDenied(existing);
+  if (closed) return closed;
+  if (existing.workflow && value.status !== existing.status) return legacyWorkflowDenied(existing);
 
   const now = new Date().toISOString();
   const before = slimSnapshot(existing);
@@ -476,10 +512,12 @@ export function updateLostItem(input, { actor = null } = {}) {
   const retention = calculateRetention(formattedValue) || existing.retention || null;
   const flags = computePhase1Flags(formattedValue, existing.flags);
 
-  const updated = normalizeOne({
+  let updated = normalizeOne({
     ...existing,
     ...formattedValue,
     fundNo: existing.fundNo,
+    workflow: existing.workflow,
+    ...(existing.workflow ? { feeSelection: existing.feeSelection } : {}),
 
     investigationSteps: Array.isArray(formattedValue.investigationSteps)
       ? formattedValue.investigationSteps
@@ -506,6 +544,15 @@ export function updateLostItem(input, { actor = null } = {}) {
     updatedAt: now,
   });
 
+  if (existing.workflow) {
+    const currentState = normalizeWorkflow(existing);
+    const rewardCents = updated.finder?.rewardChoice === "WAIVED" ? 0
+      : existing.finder?.rewardChoice === "WAIVED" ? null : currentState.payments.REWARD.dueCents;
+    const plan = validateWorkflowPlan(updated, { rewardCents });
+    if (!plan.ok) return { ...plan, errors: { workflow: plan.error } };
+    updated = { ...updated, workflow: plan.workflow };
+  }
+
   const after = slimSnapshot(updated);
 
   const records = storage.getJson(KEY_RECORDS, []);
@@ -527,20 +574,31 @@ export function updateLostItem(input, { actor = null } = {}) {
  * WRITE – DRAFT
  * ------------------------------------------------- */
 
-export function saveDraft(input, { actor = null } = {}) {
+export function saveDraft(input, { actor = null, fromDraft = false } = {}) {
   const denied = permissionDenied("ITEM_CREATE");
   if (denied) return denied;
+  if (input?.id && getLostItemById(input.id)) {
+    return { ok: false, error: "Diese Fundsache ist bereits definitiv erfasst. Bitte über die Detailansicht bearbeiten." };
+  }
+  const existing = input?.id ? getDraftById(input.id) : null;
+  if (fromDraft && !existing) {
+    return { ok: false, error: "Der Entwurf wurde nicht gefunden oder bereits übernommen. Bitte die Übersicht aktualisieren." };
+  }
   const normalizedInput = normalizeFoundAtForValidation(input);
   const { value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.DRAFT });
 
   const formatted = formatFoundAtDisplay(value);
   const draft = normalizeOne(formatted);
+  if (!draft.id) draft.id = cryptoId();
+  if (existing?.createdAt) draft.createdAt = existing.createdAt;
 
   const drafts = storage.getJson(KEY_DRAFTS, []);
-  const existing = drafts.find((d) => d?.id === draft.id) || null;
   const before = existing ? slimSnapshot(normalizeOne(existing)) : null;
 
-  const nextDrafts = upsertById(drafts, draft);
+  const index = drafts.findIndex((d, i) => draftIdentity(d, i) === draft.id);
+  const nextDrafts = [...drafts];
+  if (index < 0) nextDrafts.push(draft);
+  else nextDrafts[index] = draft;
   storage.setJson(KEY_DRAFTS, nextDrafts);
 
   const after = slimSnapshot(draft);
@@ -553,19 +611,30 @@ export function saveDraft(input, { actor = null } = {}) {
     actor,
   });
 
-  return { item: draft, errors };
+  return { ok: true, item: draft, errors };
 }
 
 /* -------------------------------------------------
  * WRITE – COMMIT (NEU)
  * ------------------------------------------------- */
 
-export function commitLostItem(input, { actor = null } = {}) {
+export function commitLostItem(input, { actor = null, fromDraft = false } = {}) {
   const denied = permissionDenied("ITEM_CREATE");
   if (denied) return denied;
+  const existing = input?.id ? getLostItemById(input.id) : null;
+  if (existing) {
+    if (getDraftById(input.id)) removeDraftById(input.id);
+    return { ok: true, item: existing, alreadyCommitted: true };
+  }
+  if (fromDraft && !getDraftById(input?.id)) {
+    return { ok: false, error: "Der Entwurf wurde nicht gefunden. Bitte die Übersicht aktualisieren." };
+  }
   const normalizedInput = normalizeFoundAtForValidation(input);
   const { ok, value, errors } = validateLostItem(normalizedInput, { mode: VALIDATION_MODE.COMMIT });
   if (!ok) return { ok: false, errors };
+  if (value.feeSelection !== undefined && !FEE_OPTIONS.some((fee) => fee.code === value.feeSelection)) {
+    return { ok: false, errors: { feeSelection: "Ungültige Gebührenauswahl." } };
+  }
 
   let record = normalizeOne({ ...value });
   if (!record.id) record.id = cryptoId();
@@ -574,6 +643,7 @@ export function commitLostItem(input, { actor = null } = {}) {
   if (!record.caseWorker) record.caseWorker = logged || record.caseWorker || null;
 
   record = formatFoundAtDisplay(record);
+  if (value.feeSelection !== undefined) record.workflow = normalizeWorkflow(record);
 
   // ✅ Phase 1: retention berechnen + flags setzen
   const retention = calculateRetention(record);
@@ -605,6 +675,8 @@ export function commitLostItem(input, { actor = null } = {}) {
   }
 
   const nextRecords = upsertById(records, record);
+  const workflowCheck = validateStoredWorkflow(record);
+  if (!workflowCheck.ok) return { ok: false, errors: { workflow: workflowCheck.error } };
   storage.setJson(KEY_RECORDS, nextRecords);
 
   removeDraftById(record.id);
@@ -640,6 +712,8 @@ export function disposeLostItem({ id, dispositionType, actor = null } = {}) {
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  const workflowDenied = legacyWorkflowDenied(current);
+  if (workflowDenied) return workflowDenied;
 
   const dt = String(dispositionType || "").toUpperCase().trim();
   const allowed = new Set(["AUCTION", "SALE", "RECYCLE", "DESTROY", "TRANSFER_TO_MUNICIPAL_ACCOUNT"]);
@@ -703,6 +777,8 @@ export function createReceipt({
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  const workflowDenied = legacyWorkflowDenied(current);
+  if (workflowDenied) return workflowDenied;
 
   const now = new Date().toISOString();
   const before = slimSnapshot(current);
@@ -900,6 +976,8 @@ export function addInvestigationStep({ id, step, actor = null }) {
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  const closed = closedWorkflowDenied(current);
+  if (closed) return closed;
 
   const who = (step?.who ?? "").toString().trim();
   const what = (step?.what ?? "").toString().trim();
@@ -945,6 +1023,8 @@ export function deleteInvestigationStep({ id, stepId, actor = null }) {
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  const closed = closedWorkflowDenied(current);
+  if (closed) return closed;
 
   const beforeSteps = current.investigationSteps || [];
   const stepDeleted = beforeSteps.find((s) => s?.id === stepId) || null;
@@ -990,15 +1070,27 @@ export function updateFinder({ id, finder, actor = null }) {
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  const closed = closedWorkflowDenied(current);
+  if (closed) return closed;
 
   const now = new Date().toISOString();
   const before = slimSnapshot(current);
 
   const clean = sanitizeFinder(finder);
+  let nextWorkflow = current.workflow;
+  if (nextWorkflow) {
+    const state = normalizeWorkflow(current);
+    const rewardCents = clean.rewardChoice === "WAIVED" ? 0
+      : current.finder?.rewardChoice === "WAIVED" ? null : state.payments.REWARD.dueCents;
+    const plan = validateWorkflowPlan({ ...current, finder: clean }, { rewardCents });
+    if (!plan.ok) return plan;
+    nextWorkflow = plan.workflow;
+  }
 
   const updated = normalizeOne({
     ...current,
     finder: clean,
+    workflow: nextWorkflow,
     updatedAt: now,
   });
 
@@ -1026,6 +1118,8 @@ export function updateOwner({ id, owner, actor = null }) {
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  const closed = closedWorkflowDenied(current);
+  if (closed) return closed;
 
   const now = new Date().toISOString();
   const before = slimSnapshot(current);
@@ -1062,6 +1156,8 @@ export function updateCollector({ id, collector, sameAsFinder = false, actor = n
 
   const current = getLostItemById(id);
   if (!current) return { ok: false, error: "Not found" };
+  const closed = closedWorkflowDenied(current);
+  if (closed) return closed;
 
   const now = new Date().toISOString();
   const before = slimSnapshot(current);
@@ -1139,7 +1235,7 @@ function removeDraftById(id) {
   if (!id) return;
 
   const drafts = storage.getJson(KEY_DRAFTS, []);
-  const nextDrafts = drafts.filter((d) => d?.id !== id);
+  const nextDrafts = drafts.filter((d, index) => draftIdentity(d, index) !== id);
   storage.setJson(KEY_DRAFTS, nextDrafts);
 }
 
@@ -1174,6 +1270,7 @@ function slimSnapshot(item) {
     id: item.id,
     fundNo: item.fundNo,
     status: item.status,
+    workflow: item.workflow || null,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     caseWorker: item.caseWorker,
@@ -1664,7 +1761,7 @@ function fnv1a32Hex(str) {
   return ("00000000" + h.toString(16)).slice(-8);
 }
 
-function computeLedgerHash(entry, prevHash) {
+export function computeLedgerHash(entry, prevHash) {
   const payload = {
     prevHash: prevHash || "GENESIS",
     id: entry?.id || "",
@@ -1681,5 +1778,11 @@ function computeLedgerHash(entry, prevHash) {
     reason: entry?.reason || "",
   };
 
+  // Alte Buchungen behalten ihre bisherige Prüfsumme. Neue Workflow-Buchungen
+  // beziehen auch Zahlungsart und Quittungsbezug in die Prüfkette ein.
+  if (entry.category) {
+    payload.category = entry.category;
+    payload.receiptId = entry.receiptId || "";
+  }
   return fnv1a32Hex(JSON.stringify(payload));
 }

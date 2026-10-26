@@ -464,7 +464,8 @@ export default function Cashbook() {
                       <div style={{ fontWeight: 700 }}>{e?.label || "—"}</div>
                       <div style={{ color: "var(--muted)" }}>{e?.description || ""}</div>
                       <div style={{ marginTop: 6, color: "var(--muted)" }}>
-                        {e?.reason ? `Grund: ${e.reason}` : "—"}
+                        {({ FEE: "Gebühren", REWARD: "Finderlohn", EXPENSES: "Auslagenersatz" })[e?.category] || "Bisherige Buchung ohne Zahlungsart"}
+                        {e?.reason ? ` · Grund: ${e.reason}` : ""}
                       </div>
                     </td>
                     <td>{e?.caseWorker || "—"}</td>
@@ -515,7 +516,10 @@ export default function Cashbook() {
                   <td className="col-type">{String(e?.type || "").toUpperCase()}</td>
                   <td className="col-amount">{centsToCHF(e?.amountCents)}</td>
                   <td className="col-fundno">{e?.fundNo || "—"}</td>
-                  <td className="col-reason">{e?.reason || "—"}</td>
+                  <td className="col-reason">
+                    {({ FEE: "Gebühren", REWARD: "Finderlohn", EXPENSES: "Auslagenersatz" })[e?.category] || "Bisherige Buchung ohne Zahlungsart"}
+                    {e?.reason ? ` · ${e.reason}` : ""}
+                  </td>
                   <td className="col-user">{e?.caseWorker || "—"}</td>
                   <td className="col-ledgerid">{e?.id || "—"}</td>
                 </tr>
